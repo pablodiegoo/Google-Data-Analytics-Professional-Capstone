@@ -1,0 +1,38 @@
+---
+title: "Bike-Share_Study"
+author: "Pablo Diego Pereira"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction
+
+This study is a part of Google Data Analytics Professional Certificate. The goal is to analyze the Divvy bike-share program following the six steps of the data analysis process: ask, prepare, process, analyze, share, and act. The study will focus on the first quarter of 2019 and 2020 to identify any changes in the program's use over time. 
+
+## Prepare
+
+### Data Sources
+
+The data used in this study is from the Divvy bike-share program in Chicago. The data is available in CSV format and can be downloaded from the following links:
+
+Datasets:
+ - [Divvy 2019 Q1](https://docs.google.com/spreadsheets/d/1uCTsHlZLm4L7-ueaSLwDg0ut3BP_V4mKDo2IMpaXrk4/template/preview?resourcekey=0-dQAUjAu2UUCsLEQQt20PDA#gid=1797029090)
+ - [Divvy 2020 Q1](https://docs.google.com/spreadsheets/d/179QVLO_yu5BJEKFVZShsKag74ZaUYIF6FevLYzs3hRc/template/preview#gid=640449855) 
+
+Or: [Online Index](https://divvy-tripdata.s3.amazonaws.com/index.html)
+
+This study will use the data from the first quarter of 2019 and 2020
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
