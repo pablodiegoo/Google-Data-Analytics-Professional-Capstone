@@ -41,11 +41,213 @@ for (file in files) {
 
 # ### Data Wrangling
 
+# Return ride_id duplicated
+# print(dbGetQuery(con, "
+#     SELECT 
+#         ride_id 
+#     FROM 
+#         t_data 
+#     GROUP BY 
+#         ride_id 
+#     HAVING 
+#         COUNT(*) > 1
+# "))
+
+
+
+# delete duplicates from each table
+dbExecute(con, "
+    DELETE FROM t_202401
+    WHERE ride_id IN (
+            SELECT ride_id 
+            FROM t_202401 
+            GROUP BY ride_id 
+            HAVING COUNT(*) > 1)")
+dbExecute(con, "
+    DELETE FROM 
+        t_202402
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202402 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202403
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202403 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202404
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202404 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202405
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202405 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202406
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202406 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202407
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202407 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202408
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202408 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )   
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202409
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202409 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202410
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202410 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202411
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202411 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202412
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202412 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+dbExecute(con, "
+    DELETE FROM 
+        t_202501
+    WHERE 
+        ride_id IN (
+            SELECT 
+                ride_id 
+            FROM 
+                t_202501 
+            GROUP BY 
+                ride_id 
+            HAVING 
+                COUNT(*) > 1
+        )
+")
+
 # The data is now in a mySQL database. I will use SQL to wrangle the data, merging all tables into one and starting the data cleaning.
 
 # Wrangle data
 # Merge all tables into one
-
 dbExecute(con, "
     CREATE TABLE t_data AS
     SELECT * FROM t_202401
@@ -72,95 +274,65 @@ dbExecute(con, "
     UNION ALL
     SELECT * FROM t_202412
     UNION ALL
-    SELECT * FROM t_202501
-")
+    SELECT * FROM t_202501")
 
-# filter the duplicated to see all the duplicated rows with all columns
-    # SELECT 
-    #     * 
-    # FROM 
-    #     t_data 
-    # WHERE 
-    #     ride_id IN (
-    #         SELECT 
-    #             ride_id 
-    #         FROM 
-    #             t_data 
-    #         GROUP BY 
-    #             ride_id 
-    #         HAVING 
-    #             COUNT(*) > 1
-    #     )
+## Fixing Data Types
+# Check if the type of columns are correct
+print(dbGetQuery(con, "
+    SELECT 
+        COLUMN_NAME, 
+        DATA_TYPE 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE NAME = 't_data'"))
 
-
-
-# delete duplicates
+# Fixing the columns type of started_at and ended_at to datetime
 dbExecute(con, "
-    DELETE FROM 
-        t_data 
-    WHERE 
-        ride_id IN (
-            SELECT 
-                ride_id 
-            FROM 
-                t_data 
-            GROUP BY 
-                ride_id 
-            HAVING 
-                COUNT(*) > 1
-        )
-")
+    ALTER TABLE t_data 
+    MODIFY started_at DATETIME, 
+    MODIFY ended_at DATETIME")
 
 ## Cleaning Data
 
 # There are no duplicates in the data. I will now clean the data by removing missing values and outliers.
 
-# Remove missing values
+# delete duplicates from each table
+dbExecute(con, "
+    DELETE FROM t_data
+    WHERE ride_id IN (
+            SELECT ride_id 
+            FROM t_data 
+            GROUP BY ride_id 
+            HAVING COUNT(*) > 1)")
 
-query <- "
-    DELETE FROM 
-        t_data 
+dbExecute(con, "
+    CREATE TEMPORARY TABLE temp_duplicados AS
+    SELECT ride_id
+    FROM t_data
+    GROUP BY ride_id
+    HAVING COUNT(*) > 1;
+
+    DELETE FROM t_data
+    WHERE ride_id IN (SELECT ride_id FROM temp_duplicados);
+
+    DROP TEMPORARY TABLE temp_duplicados;")
+
+
+# Remove missing values
+dbExecute(con, "
+    DELETE FROM t_data 
     WHERE 
         ride_id IS NULL OR
         rideable_type IS NULL OR
         started_at IS NULL OR 
         ended_at IS NULL OR 
-        member_casual IS NULL
-"
+        member_casual IS NULL")
 
-dbExecute(con, query)
-
-# check if the type of columns are correct
-query <- "
-    SELECT 
-        COLUMN_NAME, 
-        DATA_TYPE 
-    FROM 
-        INFORMATION_SCHEMA.COLUMNS 
-    WHERE 
-        TABLE_NAME = 't_data'
-"
-print(dbGetQuery(con, query))
-
-# fixing the columns type of started_at and ended_at to datetime
-query <- "
-    ALTER TABLE 
-        t_data 
-    MODIFY 
-        started_at DATETIME, 
-    MODIFY 
-        ended_at DATETIME
-"
-dbExecute(con, query)
 
 # Remove outliers if the started_at is greater than ended_at or started_at - ended_at is greater than 24 hours or less than 1 minute
-query <- "
-    DELETE FROM 
-        t_data 
+
+dbExecute(con, "
+    DELETE FROM  t_data 
     WHERE 
         started_at > ended_at OR 
         TIMESTAMPDIFF(SECOND, started_at, ended_at) > 86400 OR 
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60
-"
-
-dbExecute(con, query)
+        TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60")
