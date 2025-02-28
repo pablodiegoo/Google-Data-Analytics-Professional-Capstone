@@ -13,82 +13,159 @@ knit: reprex::reprex_render
 
 # Introduction
 
-This study is a part of Google Data Analytics Professional Certificate. The goal is to analyze the Divvy bike-share program following the six steps of the data analysis process: ask, prepare, process, analyze, share, and act. 
-The study will take from january of 2024 to january of 2025 as the time frame to analyze the data.
+This study is a part of Google Data Analytics Professional Certificate. The goal is to analyze the Divvy bike-share program following the six steps of the data analysis process: ask, prepare, process, analyze, share, and act. The study will take from january of 2024 to january of 2025 as the time frame to analyze the data.
 
 ```{r}
 ## Load libraries
 library(tidyverse)
 library(DBI)
 library(RMySQL)
+library(hrbrthemes)
+library(viridis)
+library(forcats)
 ```
+
+# Ask
+
+Out goal here is answer the following question: *How do annual members and casual riders use Cyclistic bikes dierently?*
+
+For this to happen, we will produce a report with the following deliverables:
+
+1.  A clear statement of the business task
+2.  A description of all data sources used
+3.  Documentation of any cleaning or manipulation of data
+4.  A summary of your analysis
+5.  Supporting visualizations and key ndings
+6.  Your top three recommendations based on your analysis
+
+To better translate this step into good questions that we will ask of the data provided, we need to think about what problems we are trying to solve and how the insights that emerge will be able to guide business decisions.
+
+In addition, it is essential to understand the expectations of stakeholders and the activities related to the business, only then will we be able to deliver a clear vision of the activities.
 
 # Prepare
 
-## Data Sources
+You can check all preparation process running `source("DB/data_wrangle.r")` in the console or opening the file in the IDE.
 
-The data used in this study is from the Divvy bike-share program in Chicago. The data is available in CSV format and can be downloaded from the following links: [Datasets](https://divvy-tripdata.s3.amazonaws.com/index.html). 
-The data is divided into one file for each month and includes information about the start and end time of the trip, the start and end stations, the duration of the trip, and the user type.
-I will use SQL to merge all data, so will be easier to analyze the data. All file will be downloaded and saved in the same folder as the script.
+## Sources
 
-```{r}
-## Run /DB/data_wrangle.r
-source("DB/data_wrangle.r")
-```
+The data used in this study is from the Divvy bike-share program in Chicago. The data is available in CSV format and can be downloaded from the following links: [Datasets](https://divvy-tripdata.s3.amazonaws.com/index.html). The data is divided into one file for each month and includes information about the start and end time of the trip, the start and end stations, the duration of the trip, and the user type. I will use SQL to merge all data, so will be easier to analyze the data. All file will be downloaded and saved in the same folder as the script.
 
-## Quiet tidyverse
+## Loading
 
-The tidyverse meta-package is quite chatty at startup, which can be very useful in exploratory, interactive work. It is often less useful in a reprex, so by default, we suppress this.
+I initially loaded all the CSV files into separate tables and merged them into a single one. This way, I kept the CSV data already organized in the database as a backup and could work with the processed data in a new table 't_data', no longer depending on separate files to structure the project.
 
-However, when `tidyverse_quiet` is `FALSE`, the rendered result will include a tidyverse startup message about package versions and function masking.
+## Cleaning
 
-## Chunks in languages other than R
+I cleaned the data by removing duplicates, missing values, and outliers (like trips with less then 1 minutes or more then 24 hours and also trip with started_at bigger or equal ended_at)
 
-Remember: knitr supports many other languages than R, so you can reprex bits of code in Python, Ruby, Julia, C++, SQL, and more. Note that, in many cases, this still requires that you have the relevant external interpreter installed.
+## Transform
 
-Let's try Python!
+I created new columns to help me analyze the data, like hour of the day, day of the week, month and duration of the trip in seconds. Also changed data types to make it easier to work with the data and also optimiza the data storage. Also changed stations id and name to have a standard name for all stations.
 
-```{python, eval = Sys.which("python") != "", python.reticulate = requireNamespace("reticulate", quietly = TRUE)}
-x = 'hello, python world!'
-print(x.split(' '))
-```
+# Process
 
-And bash!
+With all data ready for analysis, we can start to process the data to answer the question we asked in the first step. On the next steps we will try to answer the question on the Ask phase: *How do annual members and casual riders use Cyclistic bikes dierently?*
 
-```{bash, eval = Sys.which("bash") != ""}
-echo "Hello Bash!";
-pwd;
-ls | head;
-```
-
-Write a function in C++, use Rcpp to wrap it and ...
-
-```{Rcpp, eval = requireNamespace("Rcpp", quietly = TRUE)}
-#include <Rcpp.h>
-using namespace Rcpp;
-
-// [[Rcpp::export]]
-NumericVector timesTwo(NumericVector x) {
-  return x * 2;
-}
-```
-
-then immediately call your C++ function from R!
-
-```{r, eval = requireNamespace("Rcpp", quietly = TRUE)}
-timesTwo(1:4)
-```
-
-## Standard output and error
-
-Some output that you see in an interactive session is not actually captured by rmarkdown, when that same code is executed in the context of an `.Rmd` document. When `std_out_err` is `TRUE`, `reprex::reprex_render()` uses a feature of `callr:r()` to capture such output and then injects it into the rendered result.
-
-Look for this output in a special section of the rendered document (and notice that it does not appear right here).
+On this phase we will analyze the data to understand the behavior of the users, like the time of the day that the users use the bikes, the duration of the trips, the days of the week that the users use the bikes and the most used stations. Is a exploratory data analysis(EDA) to understand the data and the users.
 
 ```{r}
-system2("echo", args = "Output that would normally be lost")
+# Connect to mySQL
+con <- DBI::dbConnect(RMySQL::MySQL(), 
+                      dbname = sub(",$", "", Sys.getenv("DB_NAME")),
+                      host = sub(",$", "", Sys.getenv("DB_HOST")),
+                      username = sub(",$", "", Sys.getenv("DB_USER")),
+                      password = sub(",$", "", Sys.getenv("DB_PSWD")))
+# Load data
+t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
+
 ```
 
-## Session info
+## Data Overview
 
-Because `session_info` is `TRUE`, the rendered result includes session info, even though no such code is included here in the source document. 
+```{r}
+## Load Head
+head(t_data)
+```
+
+
+
+
+## Exploratory Data Analysis
+
+### Total trips made in each type of rideable separated by member type.
+```{r}
+## Bar Chart of Rideable Type by Member casual
+
+t_data %>% 
+  count(member_casual, rideable_type, name="n_trips") %>%
+  ggplot(aes(x = member_casual, y = n_trips, fill = rideable_type)) +
+  geom_col(alpha = 0.6) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Total of Trips by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Type of user",
+       y = "Total of Trips",
+       fill = "Rideable Type") +
+  theme_minimal()+
+  facet_wrap(vars(rideable_type),scales = "free_y")
+```
+### Average minutes spent in each type of rideable separated by member type.
+```{r}
+t_data %>% 
+  group_by(member_casual, rideable_type) %>% 
+  summarise(total_duration = mean(as.numeric(trip_duration)/60)) %>%
+  ggplot(aes(x = member_casual, y = total_duration, fill = rideable_type)) +
+  geom_col(alpha = 0.6) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Average Minutes by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Type of user",
+       y = "Average of Minutes",
+       fill = "Rideable Type") +
+  theme_minimal()+
+  facet_wrap(vars(rideable_type),scales = "free_y")
+```
+
+
+
+```{r}
+# Data manipulation for quantile 95%
+data <- t_data %>%
+  select(rideable_type, member_casual, trip_duration) %>%
+  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(quantile(trip_duration, 0.95) > trip_duration)
+```
+
+## Ploting the number of trips for each trip duration
+
+```{r}
+
+# Plot
+p <- data %>%
+  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
+  geom_histogram(alpha = 0.6, binwidth = 5) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+  xlab("Trip Duration") +
+  ylab("Count") +
+  facet_wrap(vars(rideable_type,member_casual),scales = "free_y", nrow = 3)
+
+p
+```
+
+```{r}
+### return values for filter 95% of the data
+data %>% 
+  group_by(rideable_type, member_casual) %>% 
+  summarise(
+    q_95 = quantile(trip_duration, 0.95)
+  )
+```

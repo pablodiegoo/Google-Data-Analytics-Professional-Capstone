@@ -8,7 +8,8 @@
 # The study will take from january of 2024 to january of 2025 as the time
 # frame to analyze the data. The data used in this study is from the Divvy
 # bike-share program in Chicago. The data is available in CSV format and can
-# be downloaded from the following links: [Datasets](https://divvy-tripdata.s3.amazonaws.com/index.html). 
+# be downloaded from the following links:
+# [Datasets](https://divvy-tripdata.s3.amazonaws.com/index.html).
 
 # The data is divided into one file for each month and includes information
 # about the start and end time of the trip, the start and end stations, the
@@ -29,18 +30,19 @@ library(DBI)
 library(RMySQL)
 
 # Push all CSV into mySQL database
+
 # Connect to mySQL
 con <- DBI::dbConnect(RMySQL::MySQL(), 
-                      dbname = Sys.getenv("DB_NAME"),
-                      host = Sys.getenv("DB_HOST"),
-                      username = Sys.getenv("DB_USER"),
-                      password = Sys.getenv("DB_PSWD"))
+                      dbname = sub(",$", "", Sys.getenv("DB_NAME")),
+                      host = sub(",$", "", Sys.getenv("DB_HOST")),
+                      username = sub(",$", "", Sys.getenv("DB_USER")),
+                      password = sub(",$", "", Sys.getenv("DB_PSWD")))
 
 # Set working directory to the script's folder
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-# Load all CSV files into mySQL that are in the same folder as the
-# script and with the format 20*-divvy-tripdata
+# Load all CSV files into mySQL that are in the same folder as the script
+# and with the format 20*-divvy-tripdata
 
 files <- list.files(pattern = "202[4-5]{1}[0-1]{1}[0-9]{1}-divvy-tripdata.csv")
 # Extract all csv to a single SQL table
@@ -85,8 +87,6 @@ dbExecute(con, "
     UNION ALL
     SELECT * FROM t_202501")
 
-# Data Type
-
 # Check if the Data type of columns are correct
 print(dbGetQuery(con, "
     SELECT 
@@ -98,20 +98,19 @@ print(dbGetQuery(con, "
 # Fixing the columns type of started at and ended at to datetime
 dbExecute(con, "
     ALTER TABLE t_data
-    MODIFY row_names INT,
-    MODIFY ride_id OBJECT,
-    MODIFY rideable_type OBJECT,
+    MODIFY row_names INT8,
+    MODIFY ride_id VARCHAR(128),
+    MODIFY rideable_type VARCHAR(128),
     MODIFY started_at DATETIME, 
     MODIFY ended_at DATETIME,
-    MODIFY start_station_name VARCHAR(255),
-    MODIFY start_station_id INT,
-    MODIFY end_station_name VARCHAR(255),
-    MODIFY end_station_id INT,
+    MODIFY start_station_name VARCHAR(128),
+    MODIFY start_station_id VARCHAR(128),
+    MODIFY end_station_name VARCHAR(128),
+    MODIFY end_station_id VARCHAR(128),
     MODIFY start_lat FLOAT,
     MODIFY start_lng FLOAT,
     MODIFY end_lat FLOAT,
-    MODIFY end_lng FLOAT,
-    MODIFY member_casual VARCHAR(255)
+    MODIFY end_lng FLOAT
     ")
 
 
@@ -142,35 +141,38 @@ dbExecute(con, "
 
 # Cleaning Data - Removing Outliers
 
+# Since our goal is answer "How do annual members and casual riders
+# use Cyclistic bikes dierently?", we  will remove the row that
+# started_at is greater than ended_at, the duration of the trip is
+# greater than 24 hours and less than 1 minute.
+
 # If the started at is greater than ended at
 dbExecute(con, "
     DELETE FROM  t_data 
     WHERE 
-        started_at > ended_at") # 227 Issues
+        started_at >= ended_at") # 227 Issues
 
 # If the duration of the trip is greater than 24 hours
 dbExecute(con, "
     DELETE FROM  t_data 
     WHERE 
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) > 86400")
+        TIMESTAMPDIFF(SECOND, started_at, ended_at) > 86400") # 380 issues
 
 # If the duration of the trip is less than 1 minute
 dbExecute(con, "
     DELETE FROM  t_data 
     WHERE 
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60")
+        TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60") # 133865 issues
 
-# Make a dataframe that list the start stations id and start station names to check possible stations with diferent IDs and make a dataframe
-start_stations <- dbGetQuery(con, "
+# Make a dataframe that list the start stations id and start station names
+# to check if there are stations with different IDs
+id_start_fix <- dbGetQuery(con, "
     SELECT 
         start_station_name, 
         start_station_id,
         COUNT(*) AS n_trips 
     FROM t_data 
-    GROUP BY start_station_name, start_station_id")
-
-# Check if there are stations with different IDs
-start_stations_fix <- start_stations %>% 
+    GROUP BY start_station_name, start_station_id") %>% 
     group_by(start_station_name) %>% 
     summarise(
         n_distinct_ids = n_distinct(start_station_id),
@@ -180,43 +182,221 @@ start_stations_fix <- start_stations %>%
     filter(n_distinct_ids > 1)
 
 # Fix stations with different IDs by changing the ID to the most common one
-# create a var to store "'"
-quote <- "'"
+# using a query
+dbExecute(con, "
+    UPDATE t_data
+    SET start_station_id = (
+        SELECT main_id
+        FROM (
+            SELECT
+                start_station_name,
+                CASE
+                    WHEN COUNT(DISTINCT start_station_id) = 1 THEN MAX(start_station_id)
+                    WHEN COUNT(DISTINCT start_station_id) > 1 THEN MAX(start_station_id)
+                END AS main_id
+            FROM t_data
+            GROUP BY start_station_name
+        ) AS MainID
+        WHERE t_data.start_station_name = MainID.start_station_name
+    )
+    WHERE start_station_id != (
+        SELECT main_id
+        FROM (
+            SELECT
+                start_station_name,
+                CASE
+                    WHEN COUNT(DISTINCT start_station_id) = 1 THEN MAX(start_station_id)
+                    WHEN COUNT(DISTINCT start_station_id) > 1 THEN MAX(start_station_id)
+                END AS main_id
+            FROM t_data
+            GROUP BY start_station_name
+        ) AS MainID
+        WHERE t_data.start_station_name = MainID.start_station_name
+    )") # 3425 issues
 
-for (i in seq_len(nrow(start_stations_fix))) {
-  dbExecute(con, paste0("
-    UPDATE t_data 
-    SET 
-      start_station_id = ", quote, start_stations_fix$most_popular_id[i], quote, "
-    WHERE 
-      start_station_name = ", quote, start_stations_fix$start_station_name[i], quote, " AND 
-      start_station_id = ", quote, start_stations_fix$less_popular_id[i], quote))
-}
-
-
-    start_stations_2 <- dbGetQuery(con, "
+# Make a dataframe that list the end stations id and end station names
+# to check if there are stations with different IDs
+id_end_fix <- dbGetQuery(con, "
     SELECT 
-        start_station_id, 
-        start_station_name,
+        end_station_name, 
+        end_station_id,
         COUNT(*) AS n_trips 
     FROM t_data 
-    GROUP BY start_station_id, start_station_name")
-
-start_stations_2_fix <- start_stations_2 %>% 
-    group_by(start_station_id) %>% 
+    GROUP BY end_station_name, end_station_id") %>% 
+    group_by(end_station_name) %>% 
     summarise(
-        n_distinct_ids = n_distinct(start_station_name),
-        most_popular_name = start_station_name[which.max(n_trips)],
-        less_popular_name = start_station_name[which.min(n_trips)]
+        n_distinct_ids = n_distinct(end_station_id),
+        most_popular_id = end_station_id[which.max(n_trips)],
+        less_popular_id = end_station_id[which.min(n_trips)]
     ) %>% 
     filter(n_distinct_ids > 1)
 
-    for (i in 1:nrow(start_stations_fix)) {
-    dbExecute(con, "
-        UPDATE t_data 
-        SET 
-            start_station_id = ",quote,start_stations_fix$most_popular_id[i],quote,"
-        WHERE 
-            start_station_name = ",quote, start_stations_fix$start_station_name[i],quote," AND 
-            start_station_id = ",quote,start_stations_fix$less_popular_id[i],quote)
-}
+# Fix stations with different IDs by changing the ID to the most common one
+# using a query
+dbExecute(con, "
+    UPDATE t_data
+    SET end_station_id = (
+        SELECT main_id
+        FROM (
+            SELECT
+                end_station_name,
+                CASE
+                    WHEN COUNT(DISTINCT end_station_id) = 1 THEN MAX(end_station_id)
+                    WHEN COUNT(DISTINCT end_station_id) > 1 THEN MAX(end_station_id)
+                END AS main_id
+            FROM t_data
+            GROUP BY end_station_name
+        ) AS MainID
+        WHERE t_data.end_station_name = MainID.end_station_name
+    )
+    WHERE end_station_id != (
+        SELECT main_id
+        FROM (
+            SELECT
+                end_station_name,
+                CASE
+                    WHEN COUNT(DISTINCT end_station_id) = 1 THEN MAX(end_station_id)
+                    WHEN COUNT(DISTINCT end_station_id) > 1 THEN MAX(end_station_id)
+                END AS main_id
+            FROM t_data
+            GROUP BY end_station_name
+        ) AS MainID
+        WHERE t_data.end_station_name = MainID.end_station_name
+    )") # 6870 issues
+
+# Make a dataframe that list the station stations names and start station ids
+# to heck if there are stations with different names
+name_start_fix <- dbGetQuery(con, "
+    SELECT 
+        start_station_name, 
+        start_station_id,
+        COUNT(*) AS n_trips 
+    FROM t_data 
+    WHERE 
+        start_station_name NOT LIKE 'Public Rack - %' OR
+        start_station_name NOT LIKE '%TEMPORARY)'
+    GROUP BY start_station_name, start_station_id") %>% # The filters where added after some checks
+    group_by(start_station_id) %>%
+    summarise(
+        n_distinct_names = n_distinct(start_station_name),
+        most_popular_name = start_station_name[which.max(n_trips)],
+        less_popular_name = start_station_name[which.min(n_trips)]
+    ) %>% 
+    filter(n_distinct_names > 1)
+
+# Fix stations with different names by changing the name to the most common one
+# using a query
+dbExecute(con, "
+    UPDATE t_data
+    SET start_station_name = (
+        SELECT main_name
+        FROM (
+            SELECT
+                start_station_id,
+                CASE
+                    WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
+                    WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
+                END AS main_name
+            FROM t_data
+            GROUP BY start_station_id
+        ) AS MainName
+        WHERE t_data.start_station_id = MainName.start_station_id
+    )
+    WHERE start_station_name != (
+        SELECT main_name
+        FROM (
+            SELECT
+                start_station_id,
+                CASE
+                    WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
+                    WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
+                END AS main_name
+            FROM t_data
+            GROUP BY start_station_id
+        ) AS MainName
+        WHERE t_data.start_station_id = MainName.start_station_id
+    )") # 134262 issues
+
+# Make a dataframe that list the end stations names and end station ids
+# to check if there are stations with different names
+name_end_fix <- dbGetQuery(con, "
+    SELECT 
+        end_station_name, 
+        end_station_id,
+        COUNT(*) AS n_trips 
+    FROM t_data 
+    WHERE 
+        end_station_name NOT LIKE 'Public Rack - %' OR
+        end_station_name NOT LIKE '%TEMPORARY)'
+    GROUP BY end_station_name, end_station_id") %>% 
+    group_by(end_station_id) %>% 
+    summarise(
+        n_distinct_names = n_distinct(end_station_name),
+        most_popular_name = end_station_name[which.max(n_trips)],
+        less_popular_name = end_station_name[which.min(n_trips)]
+    ) %>% 
+    filter(n_distinct_names > 1)
+
+# Fix stations with different names by changing the name to the most common one
+# using a query
+
+dbExecute(con, "
+    UPDATE t_data
+    SET end_station_name = (
+        SELECT main_name
+        FROM (
+            SELECT
+                end_station_id,
+                CASE
+                    WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
+                    WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
+                END AS main_name
+            FROM t_data
+            GROUP BY end_station_id
+        ) AS MainName
+        WHERE t_data.end_station_id = MainName.end_station_id
+    )
+    WHERE end_station_name != (
+        SELECT main_name
+        FROM (
+            SELECT
+                end_station_id,
+                CASE
+                    WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
+                    WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
+                END AS main_name
+            FROM t_data
+            GROUP BY end_station_id
+        ) AS MainName
+        WHERE t_data.end_station_id = MainName.end_station_id
+    )") # 135099 issues
+
+# NOTE: I changed the public rack data to most popular one too
+# because seem the data is not relevant for the analysis i am planning
+# to do.
+
+# Add a trip duration column
+dbExecute(con, "
+    ALTER TABLE t_data
+    ADD COLUMN trip_duration INT")
+
+# Calculate the trip duration in seconds
+dbExecute(con, "
+    UPDATE t_data
+    SET trip_duration = TIMESTAMPDIFF(SECOND, started_at, ended_at)")
+
+# Add columns for the hour of the day, day of the week and month
+dbExecute(con, "
+    ALTER TABLE t_data
+    ADD COLUMN hour_of_day INT,
+    ADD COLUMN day_of_week INT,
+    ADD COLUMN month INT")
+
+# Calculate the hour of the day, day of the week and month
+dbExecute(con, "
+    UPDATE t_data
+    SET hour_of_day = HOUR(started_at),
+    day_of_week = DAYOFWEEK(started_at),
+    month = MONTH(started_at)")
+
+
