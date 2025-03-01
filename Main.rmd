@@ -83,6 +83,9 @@ t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
 ## Data Overview
 
 ```{r}
+# Fix data types
+t_data$started_at <- as.Date(t_data$started_at)
+t_data$ended_at <- as.Date(t_data$ended_at)
 ## Load Head
 head(t_data)
 ```
@@ -92,11 +95,52 @@ head(t_data)
 
 ## Exploratory Data Analysis
 
+```{r}
+# Data manipulation for 100% of data
+data <- t_data %>%
+  select(rideable_type, member_casual, trip_duration) %>%
+  mutate(duration = round(as.numeric(trip_duration)/60, 0))
+```
+
+```{r}
+# Data manipulation for quantile 95%
+data_95 <- t_data %>%
+  select(rideable_type, member_casual, trip_duration) %>%
+  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(quantile(trip_duration, 0.95) > trip_duration)
+```
+
+```{r}
+# Data manipulation for quantile 80%
+data_80 <- t_data %>%
+  select(rideable_type, member_casual, trip_duration) %>%
+  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(quantile(trip_duration, 0.80) > trip_duration)
+```
+
+## Ploting box plot for trip duration
+```{r}
+data_95 %>%
+  ggplot(aes(x = member_casual, y = trip_duration, fill = rideable_type)) +
+  geom_boxplot(alpha = 0.6) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+  xlab("Type of User") +
+  ylab("Trip Duration") +
+  facet_wrap(vars(rideable_type), nrow = 3)
+```
+
 ### Total trips made in each type of rideable separated by member type.
 ```{r}
 ## Bar Chart of Rideable Type by Member casual
 
-t_data %>% 
+data %>% 
   count(member_casual, rideable_type, name="n_trips") %>%
   ggplot(aes(x = member_casual, y = n_trips, fill = rideable_type)) +
   geom_col(alpha = 0.6) +
@@ -108,11 +152,29 @@ t_data %>%
        y = "Total of Trips",
        fill = "Rideable Type") +
   theme_minimal()+
-  facet_wrap(vars(rideable_type),scales = "free_y")
+  facet_wrap(vars(rideable_type))
 ```
+### Total hours spent in each type of rideable separated by member type.
+```{r}
+data %>% 
+  group_by(member_casual, rideable_type) %>% 
+  summarise(total_duration = sum(as.numeric(trip_duration)/3600)) %>%
+  ggplot(aes(x = member_casual, y = total_duration, fill = rideable_type)) +
+  geom_col(alpha = 0.6) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Total hours by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Type of user",
+       y = "Total hours",
+       fill = "Rideable Type") +
+  theme_minimal()+
+  facet_wrap(vars(rideable_type))
+```
+
 ### Average minutes spent in each type of rideable separated by member type.
 ```{r}
-t_data %>% 
+data %>% 
   group_by(member_casual, rideable_type) %>% 
   summarise(total_duration = mean(as.numeric(trip_duration)/60)) %>%
   ggplot(aes(x = member_casual, y = total_duration, fill = rideable_type)) +
@@ -125,25 +187,19 @@ t_data %>%
        y = "Average of Minutes",
        fill = "Rideable Type") +
   theme_minimal()+
-  facet_wrap(vars(rideable_type),scales = "free_y")
+  facet_wrap(vars(rideable_type))
 ```
 
 
 
-```{r}
-# Data manipulation for quantile 95%
-data <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>%
-  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(quantile(trip_duration, 0.95) > trip_duration)
-```
+
 
 ## Ploting the number of trips for each trip duration
 
 ```{r}
 
 # Plot
-p <- data %>%
+data %>%
   ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
   geom_histogram(alpha = 0.6, binwidth = 5) +
   scale_fill_viridis(discrete = TRUE) +
@@ -156,9 +212,7 @@ p <- data %>%
   ) +
   xlab("Trip Duration") +
   ylab("Count") +
-  facet_wrap(vars(rideable_type,member_casual),scales = "free_y", nrow = 3)
-
-p
+  facet_wrap(vars(rideable_type,member_casual), nrow = 3)
 ```
 
 ```{r}

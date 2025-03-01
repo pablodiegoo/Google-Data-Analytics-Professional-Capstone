@@ -114,7 +114,7 @@ dbExecute(con, "
     ")
 
 
-# Cleaning Data - Delete duplicates from each table
+# Cleaning Data - Delete duplicates
 dbExecute(con, "
     CREATE TEMPORARY TABLE temp_duplicados AS
     SELECT ride_id
@@ -137,7 +137,7 @@ dbExecute(con, "
         ended_at IS NULL OR 
         member_casual IS NULL OR
         start_lat IS NULL OR
-        end_lat IS NULL")
+        end_lat IS NULL") # 7213 issues
 
 # Cleaning Data - Removing Outliers
 
@@ -146,23 +146,28 @@ dbExecute(con, "
 # started_at is greater than ended_at, the duration of the trip is
 # greater than 24 hours and less than 1 minute.
 
-# If the started at is greater than ended at
-dbExecute(con, "
-    DELETE FROM  t_data 
-    WHERE 
-        started_at >= ended_at") # 227 Issues
-
-# If the duration of the trip is greater than 24 hours
-dbExecute(con, "
-    DELETE FROM  t_data 
-    WHERE 
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) > 86400") # 380 issues
-
-# If the duration of the trip is less than 1 minute
-dbExecute(con, "
-    DELETE FROM  t_data 
-    WHERE 
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60") # 133865 issues
+####################################################################
+# This section is desativated since i found many outliars and then I
+# prefer to use z-score to remove now, but i will keep it here anyway
+####################################################################
+# # If the started at is greater than ended at
+# dbExecute(con, "
+#     DELETE FROM  t_data 
+#     WHERE 
+#         started_at >= ended_at") # 227 Issues
+# 
+# # If the duration of the trip is greater than 24 hours
+# dbExecute(con, "
+#     DELETE FROM  t_data 
+#     WHERE 
+#         TIMESTAMPDIFF(SECOND, started_at, ended_at) > 86400") # 380 issues
+# 
+# # If the duration of the trip is less than 1 minute
+# dbExecute(con, "
+#     DELETE FROM  t_data 
+#     WHERE 
+#         TIMESTAMPDIFF(SECOND, started_at, ended_at) < 60") # 133865 issues
+####################################################################
 
 # Make a dataframe that list the start stations id and start station names
 # to check if there are stations with different IDs
@@ -212,7 +217,7 @@ dbExecute(con, "
             GROUP BY start_station_name
         ) AS MainID
         WHERE t_data.start_station_name = MainID.start_station_name
-    )") # 3425 issues
+    )") # 6949 issues
 
 # Make a dataframe that list the end stations id and end station names
 # to check if there are stations with different IDs
@@ -262,7 +267,7 @@ dbExecute(con, "
             GROUP BY end_station_name
         ) AS MainID
         WHERE t_data.end_station_name = MainID.end_station_name
-    )") # 6870 issues
+    )") # 6995 issues
 
 # Make a dataframe that list the station stations names and start station ids
 # to heck if there are stations with different names
@@ -273,8 +278,7 @@ name_start_fix <- dbGetQuery(con, "
         COUNT(*) AS n_trips 
     FROM t_data 
     WHERE 
-        start_station_name NOT LIKE 'Public Rack - %' OR
-        start_station_name NOT LIKE '%TEMPORARY)'
+        start_station_name NOT LIKE 'Public Rack - %'
     GROUP BY start_station_name, start_station_id") %>% # The filters where added after some checks
     group_by(start_station_id) %>%
     summarise(
@@ -286,36 +290,46 @@ name_start_fix <- dbGetQuery(con, "
 
 # Fix stations with different names by changing the name to the most common one
 # using a query
-dbExecute(con, "
-    UPDATE t_data
-    SET start_station_name = (
-        SELECT main_name
-        FROM (
-            SELECT
-                start_station_id,
-                CASE
-                    WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
-                    WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
-                END AS main_name
-            FROM t_data
-            GROUP BY start_station_id
-        ) AS MainName
-        WHERE t_data.start_station_id = MainName.start_station_id
-    )
-    WHERE start_station_name != (
-        SELECT main_name
-        FROM (
-            SELECT
-                start_station_id,
-                CASE
-                    WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
-                    WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
-                END AS main_name
-            FROM t_data
-            GROUP BY start_station_id
-        ) AS MainName
-        WHERE t_data.start_station_id = MainName.start_station_id
-    )") # 134262 issues
+##################################################################
+# Removed, need fixes.
+##################################################################
+# dbExecute(con, "
+#     UPDATE t_data
+#     SET start_station_name = (
+#         SELECT main_name
+#         FROM (
+#             SELECT
+#                 start_station_id,
+#                 CASE
+#                     WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
+#                     WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
+#                 END AS main_name
+#             FROM t_data
+#             WHERE 
+#                 end_station_name NOT LIKE 'Public Rack%' OR
+#                 end_station_name NOT LIKE '%TEMPORARY)
+#             GROUP BY start_station_id
+#         ) AS MainName
+#         WHERE t_data.start_station_id = MainName.start_station_id
+#     )
+#     WHERE start_station_name != (
+#         SELECT main_name
+#         FROM (
+#             SELECT
+#                 start_station_id,
+#                 CASE
+#                     WHEN COUNT(DISTINCT start_station_name) = 1 THEN MAX(start_station_name)
+#                     WHEN COUNT(DISTINCT start_station_name) > 1 THEN MAX(start_station_name)
+#                 END AS main_name
+#             FROM t_data
+#             WHERE 
+#                 end_station_name NOT LIKE 'Public Rack%' OR
+#                 end_station_name NOT LIKE '%TEMPORARY)
+#             GROUP BY start_station_id
+#         ) AS MainName
+#         WHERE t_data.start_station_id = MainName.start_station_id
+#     )") # 134262 issues
+##################################################################
 
 # Make a dataframe that list the end stations names and end station ids
 # to check if there are stations with different names
@@ -326,12 +340,13 @@ name_end_fix <- dbGetQuery(con, "
         COUNT(*) AS n_trips 
     FROM t_data 
     WHERE 
-        end_station_name NOT LIKE 'Public Rack - %' OR
+        end_station_name NOT LIKE 'Public Rack%' OR
         end_station_name NOT LIKE '%TEMPORARY)'
     GROUP BY end_station_name, end_station_id") %>% 
     group_by(end_station_id) %>% 
     summarise(
         n_distinct_names = n_distinct(end_station_name),
+        count_trips = n_trips,
         most_popular_name = end_station_name[which.max(n_trips)],
         less_popular_name = end_station_name[which.min(n_trips)]
     ) %>% 
@@ -339,64 +354,77 @@ name_end_fix <- dbGetQuery(con, "
 
 # Fix stations with different names by changing the name to the most common one
 # using a query
-
-dbExecute(con, "
-    UPDATE t_data
-    SET end_station_name = (
-        SELECT main_name
-        FROM (
-            SELECT
-                end_station_id,
-                CASE
-                    WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
-                    WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
-                END AS main_name
-            FROM t_data
-            GROUP BY end_station_id
-        ) AS MainName
-        WHERE t_data.end_station_id = MainName.end_station_id
-    )
-    WHERE end_station_name != (
-        SELECT main_name
-        FROM (
-            SELECT
-                end_station_id,
-                CASE
-                    WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
-                    WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
-                END AS main_name
-            FROM t_data
-            GROUP BY end_station_id
-        ) AS MainName
-        WHERE t_data.end_station_id = MainName.end_station_id
-    )") # 135099 issues
-
+##################################################################
+# Removed, need fixes.
+##################################################################
+# dbExecute(con, "
+#     UPDATE t_data
+#     SET end_station_name = (
+#         SELECT main_name
+#         FROM (
+#             SELECT
+#                 end_station_id,
+#                 CASE
+#                     WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
+#                     WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
+#                 END AS main_name
+#             FROM t_data
+#             GROUP BY end_station_id
+#         ) AS MainName
+#         WHERE t_data.end_station_id = MainName.end_station_id
+#     )
+#     WHERE end_station_name != (
+#         SELECT main_name
+#         FROM (
+#             SELECT
+#                 end_station_id,
+#                 CASE
+#                     WHEN COUNT(DISTINCT end_station_name) = 1 THEN MAX(end_station_name)
+#                     WHEN COUNT(DISTINCT end_station_name) > 1 THEN MAX(end_station_name)
+#                 END AS main_name
+#             FROM t_data
+#             GROUP BY end_station_id
+#         ) AS MainName
+#         WHERE t_data.end_station_id = MainName.end_station_id
+#     )") # 135099 issues
+##################################################################
 # NOTE: I changed the public rack data to most popular one too
 # because seem the data is not relevant for the analysis i am planning
 # to do.
 
-# Add a trip duration column
+# Add columns for trip duration, hour of the day, day of the week and month
 dbExecute(con, "
     ALTER TABLE t_data
-    ADD COLUMN trip_duration INT")
-
-# Calculate the trip duration in seconds
-dbExecute(con, "
-    UPDATE t_data
-    SET trip_duration = TIMESTAMPDIFF(SECOND, started_at, ended_at)")
-
-# Add columns for the hour of the day, day of the week and month
-dbExecute(con, "
-    ALTER TABLE t_data
+    ADD COLUMN trip_duration INT,
     ADD COLUMN hour_of_day INT,
     ADD COLUMN day_of_week INT,
     ADD COLUMN month INT")
 
-# Calculate the hour of the day, day of the week and month
+# Calculate trip duration in seconds, hour of the day, day of the week and month
 dbExecute(con, "
     UPDATE t_data
-    SET hour_of_day = HOUR(started_at),
+    SET trip_duration = TIMESTAMPDIFF(SECOND, started_at, ended_at),
+    hour_of_day = HOUR(started_at),
     day_of_week = DAYOFWEEK(started_at),
     month = MONTH(started_at)")
+
+# Removing Z score > 3 and < -3
+dbExecute(con, "
+DELETE FROM t_data
+WHERE trip_duration IN (
+    SELECT trip_duration FROM (
+        SELECT 
+            td.trip_duration,
+            (td.trip_duration - avg_td.mean) / avg_td.stddev AS z_score
+        FROM 
+            t_data td,
+            (SELECT 
+                AVG(trip_duration) AS mean, 
+                STDDEV(trip_duration) AS stddev 
+             FROM t_data) AS avg_td
+        HAVING ABS(z_score) > 3
+    ) AS outliers
+);")
+
 
 
