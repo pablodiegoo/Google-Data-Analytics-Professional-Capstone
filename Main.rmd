@@ -96,31 +96,17 @@ head(t_data)
 ## Exploratory Data Analysis
 
 ```{r}
-# Data manipulation for 100% of data
+# Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
 data <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>%
-  mutate(duration = round(as.numeric(trip_duration)/60, 0))
-```
-
-```{r}
-# Data manipulation for quantile 95%
-data_95 <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>%
+  select(rideable_type, member_casual, trip_duration) %>% 
+  filter(trip_duration > 0) %>%
   mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(quantile(trip_duration, 0.95) > trip_duration)
-```
-
-```{r}
-# Data manipulation for quantile 80%
-data_80 <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>%
-  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(quantile(trip_duration, 0.80) > trip_duration)
+  filter(abs(scale(as.numeric(trip_duration))) < 3)
 ```
 
 ## Ploting box plot for trip duration
 ```{r}
-data_95 %>%
+data %>%
   ggplot(aes(x = member_casual, y = trip_duration, fill = rideable_type)) +
   geom_boxplot(alpha = 0.6) +
   scale_fill_viridis(discrete = TRUE) +
@@ -192,8 +178,6 @@ data %>%
 
 
 
-
-
 ## Ploting the number of trips for each trip duration
 
 ```{r}
@@ -213,13 +197,4 @@ data %>%
   xlab("Trip Duration") +
   ylab("Count") +
   facet_wrap(vars(rideable_type,member_casual), nrow = 3)
-```
-
-```{r}
-### return values for filter 95% of the data
-data %>% 
-  group_by(rideable_type, member_casual) %>% 
-  summarise(
-    q_95 = quantile(trip_duration, 0.95)
-  )
 ```

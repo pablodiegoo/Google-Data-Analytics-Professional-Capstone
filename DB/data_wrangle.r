@@ -139,6 +139,77 @@ dbExecute(con, "
         start_lat IS NULL OR
         end_lat IS NULL") # 7213 issues
 
+# Add columns for trip duration, hour of the day, day of the week  and month
+dbExecute(con, "
+    ALTER TABLE t_data
+    ADD COLUMN trip_duration INT,
+    ADD COLUMN hour_of_day INT,
+    ADD COLUMN day_of_week varchar(64),
+    ADD COLUMN month varchar(64)")
+
+# Copy progress to backup table
+dbExecute(con, "
+    CREATE TABLE t_backup AS SELECT * FROM t_data;")
+
+# create a new table, with columns member_casual, rideable_type, trip_duration (in seconds),
+# hour_of_day, day_of_week (as Sun, Mon, Tue, Wed, Thu, Fri, Sat), and month (as Jan, Feb,
+# Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec), year, start_station_name, end_station_name,
+# start_point (as start_lat, start_lng), and end_point (as end_lat, end_lng).
+dbExecute(con, "
+    CREATE TABLE t_data AS
+    SELECT 
+        member_casual,
+        rideable_type,
+        TIMESTAMPDIFF(SECOND, started_at, ended_at) AS trip_duration,
+        EXTRACT(HOUR FROM started_at) AS hour_of_day,
+        CASE 
+            WHEN DAYOFWEEK(started_at) = 1 THEN 'Sun'
+            WHEN DAYOFWEEK(started_at) = 2 THEN 'Mon'
+            WHEN DAYOFWEEK(started_at) = 3 THEN 'Tue'
+            WHEN DAYOFWEEK(started_at) = 4 THEN 'Wed'
+            WHEN DAYOFWEEK(started_at) = 5 THEN 'Thu'
+            WHEN DAYOFWEEK(started_at) = 6 THEN 'Fri'
+            WHEN DAYOFWEEK(started_at) = 7 THEN 'Sat'
+        END AS day_of_week,
+        CASE 
+            WHEN MONTH(started_at) = 1 THEN 'Jan'
+            WHEN MONTH(started_at) = 2 THEN 'Feb'
+            WHEN MONTH(started_at) = 3 THEN 'Mar'
+            WHEN MONTH(started_at) = 4 THEN 'Apr'
+            WHEN MONTH(started_at) = 5 THEN 'May'
+            WHEN MONTH(started_at) = 6 THEN 'Jun'
+            WHEN MONTH(started_at) = 7 THEN 'Jul'
+            WHEN MONTH(started_at) = 8 THEN 'Aug'
+            WHEN MONTH(started_at) = 9 THEN 'Sep'
+            WHEN MONTH(started_at) = 10 THEN 'Oct'
+            WHEN MONTH(started_at) = 11 THEN 'Nov'
+            WHEN MONTH(started_at) = 12 THEN 'Dec'
+        END AS month,
+        EXTRACT(YEAR FROM started_at) AS year,
+        start_station_name,
+        end_station_name,
+        CONCAT(start_lat, ', ', start_lng) AS start_point,
+        CONCAT(end_lat, ', ', end_lng) AS end_point
+    FROM t_backup;")
+
+# Removing Z score > 3 and < -3
+dbExecute(con, "
+DELETE FROM t_data
+WHERE trip_duration IN (
+    SELECT trip_duration FROM (
+        SELECT 
+            td.trip_duration,
+            (td.trip_duration - avg_td.mean) / avg_td.stddev AS z_score
+        FROM 
+            t_data td,
+            (SELECT 
+                AVG(trip_duration) AS mean, 
+                STDDEV(trip_duration) AS stddev 
+             FROM t_data) AS avg_td
+        HAVING ABS(z_score) > 3
+    ) AS outliers
+);")
+
 # Cleaning Data - Removing Outliers
 
 # Since our goal is answer "How do annual members and casual riders
@@ -391,40 +462,3 @@ name_end_fix <- dbGetQuery(con, "
 # NOTE: I changed the public rack data to most popular one too
 # because seem the data is not relevant for the analysis i am planning
 # to do.
-
-# Add columns for trip duration, hour of the day, day of the week and month
-dbExecute(con, "
-    ALTER TABLE t_data
-    ADD COLUMN trip_duration INT,
-    ADD COLUMN hour_of_day INT,
-    ADD COLUMN day_of_week INT,
-    ADD COLUMN month INT")
-
-# Calculate trip duration in seconds, hour of the day, day of the week and month
-dbExecute(con, "
-    UPDATE t_data
-    SET trip_duration = TIMESTAMPDIFF(SECOND, started_at, ended_at),
-    hour_of_day = HOUR(started_at),
-    day_of_week = DAYOFWEEK(started_at),
-    month = MONTH(started_at)")
-
-# Removing Z score > 3 and < -3
-dbExecute(con, "
-DELETE FROM t_data
-WHERE trip_duration IN (
-    SELECT trip_duration FROM (
-        SELECT 
-            td.trip_duration,
-            (td.trip_duration - avg_td.mean) / avg_td.stddev AS z_score
-        FROM 
-            t_data td,
-            (SELECT 
-                AVG(trip_duration) AS mean, 
-                STDDEV(trip_duration) AS stddev 
-             FROM t_data) AS avg_td
-        HAVING ABS(z_score) > 3
-    ) AS outliers
-);")
-
-
-
