@@ -151,6 +151,9 @@ dbExecute(con, "
 dbExecute(con, "
     CREATE TABLE t_backup AS SELECT * FROM t_data;")
 
+dbExecute(con,"
+    DROP TABLE t_data")
+
 # create a new table, with columns member_casual, rideable_type, trip_duration (in seconds),
 # hour_of_day, day_of_week (as Sun, Mon, Tue, Wed, Thu, Fri, Sat), and month (as Jan, Feb,
 # Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec), year, start_station_name, end_station_name,
@@ -188,8 +191,10 @@ dbExecute(con, "
         EXTRACT(YEAR FROM started_at) AS year,
         start_station_name,
         end_station_name,
-        CONCAT(start_lat, ', ', start_lng) AS start_point,
-        CONCAT(end_lat, ', ', end_lng) AS end_point
+        start_lat,
+        start_lng,
+        end_lat,
+        end_lng
     FROM t_backup;")
 
 # Removing Z score > 3 and < -3

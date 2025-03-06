@@ -23,6 +23,7 @@ library(RMySQL)
 library(hrbrthemes)
 library(viridis)
 library(forcats)
+library(sf)
 ```
 
 # Ask
@@ -90,21 +91,93 @@ t_data$ended_at <- as.Date(t_data$ended_at)
 head(t_data)
 ```
 
-
-
-
 ## Exploratory Data Analysis
 
 ```{r}
 # Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
 data <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>% 
-  filter(trip_duration > 0) %>%
-  mutate(duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(abs(scale(as.numeric(trip_duration))) < 3)
+  select(rideable_type, member_casual, trip_duration) %>%
+  filter(trip_duration > 0) %>% 
+  mutate(trip_duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
 ```
 
-## Ploting box plot for trip duration
+```{r}
+# Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
+geo_data <- t_data %>%
+  select(rideable_type, member_casual,trip_duration, start_lat,start_lng,end_lat,end_lng) %>%
+  filter(trip_duration > 0) %>% 
+  mutate(trip_duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
+```
+
+
+```{r}
+
+# Plot
+data %>%
+  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
+  geom_histogram(alpha = 0.6, binwidth = 2) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  theme_minimal() +  
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme(
+    legend.position = "right",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+    labs(title = "Histogram of Trips by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Trip Duration (minutes)",
+       y = "Total of Trips") +
+  facet_wrap(vars(member_casual), nrow = 1)
+```
+### Histogram of number of trips by trip duration
+
+```{r}
+
+# Plot
+data %>%
+  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
+  geom_histogram(alpha = 0.6, binwidth = 2) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  theme_minimal() +  
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+  xlab("Trip Duration (minutes)") +
+  ylab("Count") +
+  facet_wrap(vars(rideable_type,member_casual), nrow = 3)
+```
+### Frequecy of trips by rideable type
+
+```{r}
+data %>% 
+  count(member_casual, rideable_type, name="n_trips") %>% 
+  ggplot(aes(x = member_casual, y = n_trips, fill = rideable_type)) +
+  geom_col(alpha = 0.6) +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Total of Trips by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Type of user",
+       y = "Total of Trips") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1) ) +
+  scale_y_continuous(labels = scales::comma)
+```
+
+
+
+### Box plot for trip duration
+
 ```{r}
 data %>%
   ggplot(aes(x = member_casual, y = trip_duration, fill = rideable_type)) +
@@ -122,24 +195,66 @@ data %>%
   facet_wrap(vars(rideable_type), nrow = 3)
 ```
 
-### Total trips made in each type of rideable separated by member type.
-```{r}
-## Bar Chart of Rideable Type by Member casual
+### Percentile of trips by rideable type
 
+```{r}
 data %>% 
-  count(member_casual, rideable_type, name="n_trips") %>%
-  ggplot(aes(x = member_casual, y = n_trips, fill = rideable_type)) +
-  geom_col(alpha = 0.6) +
+  count(rideable_type, member_casual, name="n_trips") %>%
+  group_by(member_casual) %>%
+  mutate(percent = n_trips / sum(n_trips) * 100, pct_label = round(as.numeric(percent), 2)) %>%
+  arrange(desc(percent)) %>%
+  mutate(ymax = cumsum(percent), ymin = c(0, head(ymax, n=-1)),labpos = (ymax+ymin)/2) %>%
+  ungroup() %>%
+  ggplot(aes(x = 2, y = percent, fill = rideable_type)) +
+  geom_bar(width = 1, stat = "identity", alpha = 0.6) +
+  geom_text(aes( x=1 ,y=labpos, label=paste0(pct_label ," %")), size=3,alpha = 0.6) +
+  coord_polar("y", start = 0) +
   scale_fill_viridis(discrete = TRUE) +
   scale_color_viridis(discrete = TRUE) +
-  labs(title = "Total of Trips by Member Type",
+  labs(title = "Percentile of Trips by Rideable Type",
+       subtitle = "January 2024 to January 2025",
+       x = "",
+       y = "",
+       fill = "Rideable Type") +
+  theme_void() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right") +
+  xlim(0, 2.5) +
+  facet_wrap(vars(member_casual), nrow = 1)
+```
+
+### Heatmap of trips on geom_map of chicago
+
+```{r}
+# geo data
+geo_data <- t_data %>%
+  select(rideable_type, member_casual, trip_duration, start_lat, start_lng) %>%
+  filter(trip_duration > 0) %>% 
+  mutate(trip_duration = round(as.numeric(trip_duration)/60, 0)) %>%
+  filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
+```
+
+```{r}
+chi_map <- read_sf("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson")
+```
+
+
+```{r}
+geo_data %>%  ggplot() + 
+  geom_sf(data = chi_map) + 
+  geom_point(aes(x=start_lng, y=start_lat, color=member_casual, size=3),alpha = 0.6)+
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Total hours by Member Type",
        subtitle = "January 2024 to January 2025",
        x = "Type of user",
-       y = "Total of Trips",
+       y = "Total hours",
        fill = "Rideable Type") +
-  theme_minimal()+
-  facet_wrap(vars(rideable_type))
+  theme_minimal()
 ```
+
 ### Total hours spent in each type of rideable separated by member type.
 ```{r}
 data %>% 
@@ -178,23 +293,3 @@ data %>%
 
 
 
-## Ploting the number of trips for each trip duration
-
-```{r}
-
-# Plot
-data %>%
-  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
-  geom_histogram(alpha = 0.6, binwidth = 5) +
-  scale_fill_viridis(discrete = TRUE) +
-  scale_color_viridis(discrete = TRUE) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    panel.spacing = unit(0.1, "lines"),
-    strip.text.x = element_text(size = 8)
-  ) +
-  xlab("Trip Duration") +
-  ylab("Count") +
-  facet_wrap(vars(rideable_type,member_casual), nrow = 3)
-```
