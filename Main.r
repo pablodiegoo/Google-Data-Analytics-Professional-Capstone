@@ -7,6 +7,16 @@ library(viridis)
 library(forcats)
 library(ggmap)
 
+# Install Packages
+  # install.packages("tidyverse")
+  # install.packages("DBI")
+  # install.packages("RPostgreSQL")
+  # install.packages("hrbrthemes")
+  # install.packages("viridis")
+  # install.packages("forcats")
+  # install.packages("ggmap")
+
+
 # Push all CSV into mySQL database
 
 # Connect to mySQL
@@ -330,3 +340,6 @@ data_time  %>%
        subtitle="Number of Travels percentage",
        caption=element_blank())
 ggsave("dataviz/Heatmap.jpeg", width = 10, height = 6, units = "in")
+
+# Geoheatmap
+
