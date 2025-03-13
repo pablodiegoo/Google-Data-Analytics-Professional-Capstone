@@ -6,9 +6,6 @@ library(hrbrthemes)
 library(viridis)
 library(forcats)
 library(ggmap)
-library(sf)
-library(geosphere)
-
 
 # Push all CSV into mySQL database
 
@@ -410,52 +407,6 @@ data_time  %>%
   )+   
   labs(x="Week Day", y=element_blank(),
        title="Usage by user type",
-       subtitle="Number of Travels by weekday and hour",
-       caption=element_blank())+
-  scale_y_reverse(breaks = seq(0, 23, by = 1), labels = c("00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"))
-ggsave("dataviz/heatmapWH.jpeg", width = 10, height = 40, units = "in")
-
-### Map
-# Get chicago map & cords
-chicago_map <- st_read("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson")
-cds <- t_data %>%
-  select(start_lat, start_lng) %>%
-  filter(start_lat != 0 & start_lng != 0) %>%
-  st_as_sf(coords = c("start_lng", "start_lat"), crs = 4326)
-
-vcds <- st_intersection(cords, chicago_map)
-
-# Map of stations and trip count
-stations %>%
-  group_by(start_station_name,member_casual) %>%
-  filter(n_trips>0) %>%
-  reframe(n_trips,lng,lat) %>%
-  ggplot() +
-  geom_sf(data = chicago_map, aes(), fill = NA) +
-  geom_point(aes(x = lng, y = lat, size = n_trips/1000, color=n_trips/1000, alpha= n_trips/1000)) +
-  labs(title = "Total Trips by Member Type",
-       subtitle = "January 2024 to January 2025 over 100 trips per station",
-       x = "Type of user",
-       y = element_blank(),
-       fill = element_blank()) +
-  theme_minimal() +
-  facet_wrap(vars(member_casual)) +
-  scale_size_continuous(
-    name = "Number of Trips (Thousands)", trans = "log",
-    range = c(0.1, 4), breaks = c(0.1, 1, 5, 35)
-  ) +
-  scale_alpha_continuous(
-    name = "Number of Trips (Thousands)", trans = "log",
-    range = c(0.1, 1), breaks = c(0.1, 1, 5, 35)
-  ) +
-  scale_color_viridis_c(
-    trans = "log",
-    breaks = c(0.1, 1, 5, 35), name = "Number of Trips (Thousands)"
-  ) +
-  guides(colour = guide_legend()) +
-ggsave("dataviz/geomap.jpeg", width = 10, height = 6, units = "in")
-
-
-
-trip_filtered
-
+       subtitle="Number of Travels percentage",
+       caption=element_blank())
+ggsave("dataviz/Heatmap.jpeg", width = 10, height = 6, units = "in")
