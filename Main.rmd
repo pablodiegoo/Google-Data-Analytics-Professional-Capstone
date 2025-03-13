@@ -162,9 +162,6 @@ geo_data <- t_data %>%
   filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
 ```
 
-```{r}
-chi_map <- read_sf("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson")
-```
 
 ```{r}
 geo_data %>%  ggplot() + 

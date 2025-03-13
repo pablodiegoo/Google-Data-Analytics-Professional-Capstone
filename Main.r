@@ -6,6 +6,9 @@ library(hrbrthemes)
 library(viridis)
 library(forcats)
 library(ggmap)
+library(sf)
+library(geosphere)
+
 
 # Push all CSV into mySQL database
 
@@ -165,7 +168,7 @@ data <- t_data %>%
 
 # Group by start station name and count trips
 stations <- t_data %>%
-  group_by(start_station_name) %>%
+  group_by(start_station_name,member_casual,rideable_type) %>%
   summarise(n_trips = n(), lng = mean(start_lng), lat = mean(start_lat)) %>%
   arrange(desc(n_trips))  %>%
   filter(start_station_name != "")
@@ -178,6 +181,18 @@ data_time <- t_data %>%
   summarise(n_trips = n(),trip_duration=sum(trip_duration))%>%
   arrange(year, month, day_of_week,hour_of_day, rideable_type, member_casual)
 
+# Trip destination and distance dataframe
+trip <- t_data %>%
+  filter(start_station_name != "" & end_station_name != "") %>%
+  group_by(member_casual, start_station_name, end_station_name) %>%
+  summarise(n_trips = n(), duration=mean(trip_duration), s_lng = mean(start_lng), s_lat = mean(start_lat), e_lng = mean(end_lng),e_lat = mean(end_lat))
+
+# Filter trip with top 30 n_trips
+trip_filtered <- trip %>%
+  group_by(member_casual) %>%
+  mutate(distance = distHaversine(matrix(c(s_lng, s_lat), ncol = 2), matrix(c(e_lng, e_lat), ncol = 2)))
+
+t_data %>% distHaversine(matrix(c(start_lng, start_lat), ncol = 2), matrix(c(end_lng, end_lat), ncol = 2))
 # Histogram: Number of trips by trip duration
 data %>%
   ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
@@ -281,7 +296,7 @@ data %>%
   xlim(0.5, 2.5)
 ggsave("dataviz/piechart.jpeg", width = 10, height = 6, units = "in")
 
-# Use analysis
+# Use analysis percentage
 data_time  %>%
   mutate(date = paste(month,year, sep=".")) %>%
     mutate(date = factor(date, levels = c("Jan.2024", "Feb.2024", "Mar.2024", "Apr.2024", "May.2024","Jun.2024", "Jul.2024", "Aug.2024", "Sep.2024", "Oct.2024","Nov.2024", "Dec.2024", "Jan.2025"))) %>%
@@ -305,21 +320,89 @@ data_time  %>%
   facet_wrap(vars(member_casual), nrow = 2)
 ggsave("dataviz/stackedBar.jpeg", width = 10, height = 6, units = "in")
 
-# Use heatmap
+# Use analysis Month
 data_time  %>%
   mutate(date = paste(month,year, sep=".")) %>%
-    mutate(date = factor(date, levels = c("Jan.2024", "Feb.2024", "Mar.2024", "Apr.2024", "May.2024","Jun.2024", "Jul.2024", "Aug.2024", "Sep.2024", "Oct.2024","Nov.2024", "Dec.2024", "Jan.2025"))) %>%
-  group_by(date,hour_of_day,member_casual) %>%
+  mutate(date = factor(date, levels = c("Jan.2024", "Feb.2024", "Mar.2024", "Apr.2024", "May.2024","Jun.2024", "Jul.2024", "Aug.2024", "Sep.2024", "Oct.2024","Nov.2024", "Dec.2024", "Jan.2025"))) %>%
+  group_by(date,member_casual,rideable_type) %>%
+  summarise(n = sum(n_trips)) %>%
+  ggplot(aes(x=date, y=n, fill=rideable_type)) +  
+    geom_bar(stat="identity", position="stack",alpha=0.6 , size=.5) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme_minimal() +
+  theme(
+    legend.position = "top",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  )+   
+  labs(x="Month", y="Total of Trips",
+       title="Usage by user type",
+       subtitle="Number of Trips",
+       caption="Brought to you by the letter 'g'") +
+  scale_y_continuous(labels = scales::comma) +
+  facet_wrap(vars(member_casual), nrow = 1)
+ggsave("dataviz/stackedBarMonth.jpeg", width = 10, height = 6, units = "in")
+
+# Use analysis Weekday
+data_time  %>%
+  group_by(day_of_week,member_casual,rideable_type) %>%
+  summarise(n = sum(n_trips)) %>%
+  ggplot(aes(x=day_of_week, y=n, fill=rideable_type)) +  
+    geom_bar(stat="identity", position="stack",alpha=0.6 , size=.5) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme_minimal() +
+  theme(
+    legend.position = "top",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  )+   
+  labs(x="Week Day", y="Total of Trips",
+       title="Usage by user type",
+       subtitle="Number of Trips",
+       caption="Brought to you by the letter 'g'") +
+  scale_y_continuous(labels = scales::comma) +
+  facet_wrap(vars(member_casual), nrow = 1)
+ggsave("dataviz/stackedBarWeekday.jpeg", width = 10, height = 6, units = "in")
+
+# Use analysis Hour
+data_time  %>%
+  group_by(hour_of_day,member_casual,rideable_type) %>%
+  summarise(n = sum(n_trips)) %>%
+  ggplot(aes(x=hour_of_day, y=n, fill=rideable_type)) +  
+    geom_bar(stat="identity", position="stack",alpha=0.6 , size=.5) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme_minimal() +
+  theme(
+    legend.position = "top",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  )+   
+  labs(x="Hour of Day", y="Total of Trips",
+       title="Usage by user type",
+       subtitle="Number of Trips",
+       caption="Brought to you by the letter 'g'") +
+  scale_y_continuous(labels = scales::comma) +
+  facet_wrap(vars(member_casual), nrow = 1)
+ggsave("dataviz/stackedBarHour.jpeg", width = 10, height = 6, units = "in")
+
+# Use heatmap (Weekday x Hour)
+data_time  %>%
+  mutate(date = paste(month,year, sep=".")) %>%
+  mutate(date = factor(date, levels = c("Jan.2024", "Feb.2024", "Mar.2024", "Apr.2024", "May.2024","Jun.2024", "Jul.2024", "Aug.2024", "Sep.2024", "Oct.2024","Nov.2024", "Dec.2024", "Jan.2025"))) %>%
+  group_by(date,day_of_week,hour_of_day,member_casual) %>%
   summarise(n = sum(n_trips)) %>%
   mutate(percentage = round(as.numeric(n/sum(n)*100),2)) %>%
-  ggplot(aes(x = date, y = hour_of_day, fill = n)) +
+  ggplot(aes(x = day_of_week, y = hour_of_day, fill = n)) +
     viridis::scale_fill_viridis(name="Divvy Rides",
-                       option = 'C',
-                       direction = 1,
-                       na.value = "grey93") +
+                      option = 'C',
+                      direction = 1,
+                      na.value = "grey93") +
     geom_tile(color = 'white', size = 0.001) +
-    facet_wrap('member_casual', nrow = 1) +
-      theme_minimal() +
+    facet_wrap(vars(date,member_casual), ncol=2) +
+    theme_minimal() +
   theme(
     panel.spacing = unit(0.1, "lines"),
     strip.text.x = element_text(size = 8),
@@ -327,6 +410,52 @@ data_time  %>%
   )+   
   labs(x="Week Day", y=element_blank(),
        title="Usage by user type",
-       subtitle="Number of Travels percentage",
-       caption=element_blank())
-ggsave("dataviz/Heatmap.jpeg", width = 10, height = 6, units = "in")
+       subtitle="Number of Travels by weekday and hour",
+       caption=element_blank())+
+  scale_y_reverse(breaks = seq(0, 23, by = 1), labels = c("00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"))
+ggsave("dataviz/heatmapWH.jpeg", width = 10, height = 40, units = "in")
+
+### Map
+# Get chicago map & cords
+chicago_map <- st_read("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson")
+cds <- t_data %>%
+  select(start_lat, start_lng) %>%
+  filter(start_lat != 0 & start_lng != 0) %>%
+  st_as_sf(coords = c("start_lng", "start_lat"), crs = 4326)
+
+vcds <- st_intersection(cords, chicago_map)
+
+# Map of stations and trip count
+stations %>%
+  group_by(start_station_name,member_casual) %>%
+  filter(n_trips>0) %>%
+  reframe(n_trips,lng,lat) %>%
+  ggplot() +
+  geom_sf(data = chicago_map, aes(), fill = NA) +
+  geom_point(aes(x = lng, y = lat, size = n_trips/1000, color=n_trips/1000, alpha= n_trips/1000)) +
+  labs(title = "Total Trips by Member Type",
+       subtitle = "January 2024 to January 2025 over 100 trips per station",
+       x = "Type of user",
+       y = element_blank(),
+       fill = element_blank()) +
+  theme_minimal() +
+  facet_wrap(vars(member_casual)) +
+  scale_size_continuous(
+    name = "Number of Trips (Thousands)", trans = "log",
+    range = c(0.1, 4), breaks = c(0.1, 1, 5, 35)
+  ) +
+  scale_alpha_continuous(
+    name = "Number of Trips (Thousands)", trans = "log",
+    range = c(0.1, 1), breaks = c(0.1, 1, 5, 35)
+  ) +
+  scale_color_viridis_c(
+    trans = "log",
+    breaks = c(0.1, 1, 5, 35), name = "Number of Trips (Thousands)"
+  ) +
+  guides(colour = guide_legend()) +
+ggsave("dataviz/geomap.jpeg", width = 10, height = 6, units = "in")
+
+
+
+trip_filtered
+
