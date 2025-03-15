@@ -147,20 +147,6 @@ data_time <- t_data %>%
 
 Plot travel
 
-```{r}
-
-",```
-
-### Heatmap of trips on geom_map of chicago
-
-```{r}
-# geo data
-geo_data <- t_data %>%
-  select(rideable_type, member_casual, trip_duration, start_lat, start_lng) %>%
-  filter(trip_duration > 0) %>% 
-  mutate(trip_duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
-```
 
 
 ```{r}

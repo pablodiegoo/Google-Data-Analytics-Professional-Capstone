@@ -6,6 +6,8 @@ library(hrbrthemes)
 library(viridis)
 library(forcats)
 library(ggmap)
+library(sf)
+library(geosphere)
 
 # Push all CSV into mySQL database
 
@@ -19,15 +21,12 @@ con <- DBI::dbConnect(RMySQL::MySQL(),
 # Set working directory to the script's folder
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-# Load all CSV files into mySQL that are in the same folder as the script
-# and with the format 20*-divvy-tripdata
-
+# Load all CSV files
 files <- list.files(pattern = "202[4-5]{1}[0-1]{1}[0-9]{1}-divvy-tripdata.csv")
-# Extract all csv to a single SQL table
+
+# Extract all csv
 for (file in files) {
-  # Extract table name from file name
   table_name <- paste0("t_", gsub("-divvy-tripdata.csv", "", file))
-  # Load CSV into mySQL
   dbWriteTable(con, table_name, read.csv(file), overwrite = TRUE)
 }
 
@@ -189,7 +188,6 @@ trip_filtered <- trip %>%
   group_by(member_casual) %>%
   mutate(distance = distHaversine(matrix(c(s_lng, s_lat), ncol = 2), matrix(c(e_lng, e_lat), ncol = 2)))
 
-t_data %>% distHaversine(matrix(c(start_lng, start_lat), ncol = 2), matrix(c(end_lng, end_lat), ncol = 2))
 # Histogram: Number of trips by trip duration
 data %>%
   ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
@@ -407,6 +405,71 @@ data_time  %>%
   )+   
   labs(x="Week Day", y=element_blank(),
        title="Usage by user type",
-       subtitle="Number of Travels percentage",
-       caption=element_blank())
-ggsave("dataviz/Heatmap.jpeg", width = 10, height = 6, units = "in")
+       subtitle="Number of Travels by weekday and hour",
+       caption=element_blank())+
+  scale_y_reverse(breaks = seq(0, 23, by = 1), labels = c("00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"))
+ggsave("dataviz/heatmapWH.jpeg", width = 10, height = 40, units = "in")
+
+# Map of stations and trip count
+stations %>%
+  group_by(start_station_name,member_casual) %>%
+  filter(n_trips>0) %>%
+  reframe(n_trips,lng,lat) %>%
+  ggplot() +
+  geom_sf(data = chicago_map, aes(), fill = NA) +
+  geom_point(aes(x = lng, y = lat, size = n_trips/1000, color=n_trips/1000, alpha= n_trips/1000)) +
+  labs(title = "Total Trips by Member Type",
+       subtitle = "January 2024 to January 2025 over 100 trips per station",
+       x = "Type of user",
+       y = element_blank(),
+       fill = element_blank()) +
+  theme_minimal() +
+  facet_wrap(vars(member_casual)) +
+  scale_size_continuous(
+    name = "Number of Trips (Thousands)", trans = "log",
+    range = c(0.1, 4), breaks = c(0.1, 1, 5, 35)
+  ) +
+  scale_alpha_continuous(
+    name = "Number of Trips (Thousands)", trans = "log",
+    range = c(0.1, 1), breaks = c(0.1, 1, 5, 35)
+  ) +
+  scale_color_viridis_c(
+    trans = "log",
+    breaks = c(0.1, 1, 5, 35), name = "Number of Trips (Thousands)"
+  ) +
+  guides(colour = guide_legend()) +
+ggsave("dataviz/geomap.jpeg", width = 10, height = 6, units = "in")
+
+
+# Get chicago map & cords
+chicago_map <- st_read(
+  "https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson"
+)
+
+# Perform a spatial join to count trips per community area
+stations_sf <- st_as_sf(stations, coords = c("lng", "lat"), crs = 4326)
+stations_joined <- st_join(stations_sf, chicago_map, join = st_within)
+
+# Summarize the number of trips per community area
+trips_by_community <- stations_joined %>%
+  group_by(community) %>%
+  summarise(n_trips = sum(n_trips, na.rm = TRUE))
+
+# Merge the trip data with the Chicago map
+chicago_map <- merge(
+  as.data.frame(chicago_map), trips_by_community, by = "community", all.x = TRUE
+)
+
+# Fill NA values in n_trips with 0
+chicago_map$n_trips[is.na(chicago_map$n_trips)] <- 0
+
+# Plot the choropleth map
+ggplot(chicago_map) +
+  geom_sf(aes(fill = n_trips), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "viridis", direction = 1) +
+  labs(
+    title = "Number of Trips by Chicago Community Area",
+    fill = "Number of Trips"
+  ) +
+  theme_minimal()
+ggsave("dataviz/choropleth_map.jpeg", width = 10, height = 6, units = "in")
