@@ -149,54 +149,11 @@ Plot travel
 
 
 
-```{r}
-geo_data %>%  ggplot() + 
-  geom_sf(data = chi_map, fill) + 
-  geom_point(aes(x=start_lng, y=start_lat, color=member_casual),alpha = 0.6, size=0.1)+
-  scale_fill_viridis(discrete = TRUE) +
-  scale_color_viridis(discrete = TRUE) +
-  labs(title = "Total hours by Member Type",
-       subtitle = "January 2024 to January 2025",
-       x = "Type of user",
-       y = "Total hours",
-       fill = "Rideable Type") +
-  theme_minimal()
-```
 
 ### Total hours spent in each type of rideable separated by member type.
 
-```{r}
-data %>% 
-  group_by(member_casual, rideable_type) %>% 
-  summarise(total_duration = sum(as.numeric(trip_duration)/3600)) %>%
-  ggplot(aes(x = member_casual, y = total_duration, fill = rideable_type)) +
-  geom_col(alpha = 0.6) +
-  scale_fill_viridis(discrete = TRUE) +
-  scale_color_viridis(discrete = TRUE) +
-  labs(title = "Total hours by Member Type",
-       subtitle = "January 2024 to January 2025",
-       x = "Type of user",
-       y = "Total hours",
-       fill = "Rideable Type") +
-  theme_minimal()+
-  facet_wrap(vars(rideable_type))
-```
+
 
 ### Average minutes spent in each type of rideable separated by member type.
 
-```{r}
-data %>% 
-  group_by(member_casual, rideable_type) %>% 
-  summarise(total_duration = mean(as.numeric(trip_duration)/60)) %>%
-  ggplot(aes(x = member_casual, y = total_duration, fill = rideable_type)) +
-  geom_col(alpha = 0.6) +
-  scale_fill_viridis(discrete = TRUE) +
-  scale_color_viridis(discrete = TRUE) +
-  labs(title = "Average Minutes by Member Type",
-       subtitle = "January 2024 to January 2025",
-       x = "Type of user",
-       y = "Average of Minutes",
-       fill = "Rideable Type") +
-  theme_minimal()+
-  facet_wrap(vars(rideable_type))
-```
+

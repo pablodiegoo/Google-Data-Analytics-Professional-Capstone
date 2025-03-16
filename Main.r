@@ -172,10 +172,10 @@ stations <- t_data %>%
 # Grouping for timeframe analysis
 data_time <- t_data %>%
   select(rideable_type, member_casual, year, month, day_of_week,hour_of_day, trip_duration) %>%
-  mutate(day_of_week = factor(day_of_week, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")), month = factor(month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))) %>%
-  group_by(year, month, day_of_week,hour_of_day, rideable_type, member_casual) %>%
+  mutate(day_of_week = factor(day_of_week, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")), month = factor(month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")), type = case_when(member_casual == "member" & rideable_type == "electric_bike" ~ "M-Eletric Bike", member_casual == "member" & rideable_type == "classic_bike" ~ "M-Classic Bike", member_casual == "member" & rideable_type == "electric_scooter" ~ "M-Eletric Scooter", member_casual == "casual" & rideable_type == "electric_bike" ~ "C-Eletric Bike", member_casual == "casual" & rideable_type == "classic_bike" ~ "C-Classic Bike", member_casual == "casual" & rideable_type == "electric_scooter" ~ "C-Eletric Scooter"),trip_duration=round(as.numeric(trip_duration)/60, 0)) %>%
+  group_by(year, month, day_of_week,hour_of_day, type) %>%
   summarise(n_trips = n(),trip_duration=sum(trip_duration))%>%
-  arrange(year, month, day_of_week,hour_of_day, rideable_type, member_casual)
+  arrange(year, month, day_of_week,hour_of_day, type)
 
 # Trip destination and distance dataframe
 trip <- t_data %>%
@@ -473,3 +473,19 @@ ggplot(chicago_map) +
   ) +
   theme_minimal()
 ggsave("dataviz/choropleth_map.jpeg", width = 10, height = 6, units = "in")
+
+# Average minutes spent in each type of rideable separated by member type using a line chart
+data_time %>%
+  group_by(type, day_of_week) %>%
+  summarise(avg_duration = trip_duration/n_trips) %>%
+  ggplot(aes(x = avg_duration, y = day_of_week, color = type)) +
+  geom_line() +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = "Average Trip Duration by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Week Day",
+       y = "Average Trip Duration (minutes)",
+       fill = "Rideable Type") +
+  theme_minimal()
+ggsave("dataviz/avg_duration.jpeg", width = 10, height = 6, units = "in")
