@@ -99,12 +99,14 @@ dbExecute(con, "
         MONTH(started_at) AS month,
         YEAR(started_at) AS year,
         start_station_name,
+        start_station_id,
         end_station_name,
+        end_station_id,
         start_lat,
         start_lng,
         end_lat,
         end_lng
-    FROM t_base;"); # total size 852mb
+    FROM t_base;"); # total size 922mb
 
 dbExecute(con, "
     -- Fixing column types
@@ -119,14 +121,16 @@ dbExecute(con, "
     MODIFY year SMALLINT,
     MODIFY start_station_name VARCHAR(64),
     MODIFY end_station_name VARCHAR(64),
+    MODIFY start_station_id VARCHAR(64),
+    MODIFY end_station_id VARCHAR(64),
     MODIFY start_lat FLOAT,
     MODIFY start_lng FLOAT,
     MODIFY end_lat FLOAT,
-    MODIFY end_lng FLOAT;"); # total size 598mb
+    MODIFY end_lng FLOAT;"); # total size 705mb
 
 dbExecute(con, "
     -- Removing negative duration
-    DELETE FROM t_data WHERE duration <= 0;") # - 1652 lines
+    DELETE FROM t_data WHERE duration <= 60;") # - 135515 lines
 
 dbExecute(con, "
 -- Removing Z score > 3 and < -3
@@ -144,50 +148,42 @@ WHERE duration IN (
              FROM t_data) AS avg_td
         HAVING ABS(z_score) > 3
     ) AS outliers
-);") # - 40520 lines
+);") # - 39599 lines
 
-dbExecute(con, "
-    -- Removing negative duration
-    DELETE FROM t_data WHERE duration <= 60;") # - 133863 lines
 
+# Load csv  as a new table
+dbWriteTable(con, "stations", read.csv("Divvy_Bicycle_Stations_20250317.csv"), overwrite = TRUE)
+
+# Use the table station data to fix the station names
+
+
+# Checking some data
 
 # Load data
 t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
-
-# Plot scatter start lat e start lng
-t_data %>%
-  ggplot(aes(x = start_lng, y = start_lat)) +
-  geom_point(alpha = 0.6) +
-  labs(title = "Scatter plot of Start Station",
-       subtitle = "January 2024 to January 2025",
-       x = "Longitude",
-       y = "Latitude") +
-  theme_minimal()
 
 # Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
 data <- t_data %>%
   select(rideable_type, member_casual, duration) %>%
   mutate(trip_duration = round(as.numeric(duration)/60, 0))
 
-# Group by start station name and count trips
-stations <- t_data %>%
-  group_by(start_station_name,member_casual,rideable_type) %>%
-  summarise(n_trips = n(), lng = mean(start_lng), lat = mean(start_lat)) %>%
-  arrange(desc(n_trips))  %>%
-  filter(start_station_name != "")
+# Group by start station name and count trips 
+# Downloaded at https://data.cityofchicago.org/Transportation/Divvy-Bicycle-Stations/bbyy-e7gq/about_data
+stations <- dbExecute(con, "SELECT * FROM stations")
+
 
 # Grouping for timeframe analysis
 data_time <- t_data %>%
   mutate(type = case_when(
-      member_casual == 1 & rideable_type == 1 ~ "M-Eletric Bike",
-      member_casual == 1 & rideable_type == 2 ~ "M-Classic Bike",
-      member_casual == 1 & rideable_type == 3 ~ "M-Eletric Scooter",
-      member_casual == 0 & rideable_type == 1 ~ "C-Eletric Bike",
-      member_casual == 0 & rideable_type == 2 ~ "C-Classic Bike",
-      member_casual == 0 & rideable_type == 3 ~ "C-Eletric Scooter")
-      ) %>%
-  group_by(year, month, weekday,hour, type) %>%
-  summarise(n_trips = n(),duration=sum(duration))%>%
+    member_casual == 1 & rideable_type == 1 ~ "M-Electric Bike",
+    member_casual == 1 & rideable_type == 2 ~ "M-Classic Bike",
+    member_casual == 1 & rideable_type == 3 ~ "M-Electric Scooter",
+    member_casual == 0 & rideable_type == 1 ~ "C-Electric Bike",
+    member_casual == 0 & rideable_type == 2 ~ "C-Classic Bike",
+    member_casual == 0 & rideable_type == 3 ~ "C-Electric Scooter"
+  )) %>%
+  group_by(year, month, weekday,hour, type,member_casual,rideable_type) %>%
+  summarise(n_trips = n(),duration=sum(duration)/n())%>%
   arrange(year, month, weekday,hour, type)
 
 # Trip destination and distance dataframe
@@ -195,11 +191,6 @@ trip <- t_data %>%
   filter(start_station_name != "" & end_station_name != "") %>%
   group_by(member_casual, start_station_name, end_station_name) %>%
   summarise(n_trips = n(), duration=mean(duration), s_lng = mean(start_lng), s_lat = mean(start_lat), e_lng = mean(end_lng),e_lat = mean(end_lat))
-
-# Filter trip with top 30 n_trips
-trip_filtered <- trip %>%
-  group_by(member_casual) %>%
-  mutate(distance = distHaversine(matrix(c(s_lng, s_lat), ncol = 2), matrix(c(e_lng, e_lat), ncol = 2)))
 
 # Histogram: Number of trips by trip duration
 data %>%
