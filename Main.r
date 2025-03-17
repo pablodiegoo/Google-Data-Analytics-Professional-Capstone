@@ -21,6 +21,19 @@ con <- DBI::dbConnect(RMySQL::MySQL(),
 # Set working directory to the script's folder
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
+# Load csv  from stations
+dbWriteTable(con, "stations", read.csv("Divvy_Bicycle_Stations_20250317.csv"), overwrite = TRUE)
+dbExecute(con, "
+    ALTER TABLE stations
+    CHANGE `Station.Name` s_name VARCHAR(64),
+    CHANGE `Short.Name` s_id VARCHAR(64),
+    CHANGE `Latitude` lat FLOAT,
+    CHANGE `Longitude` lng FLOAT,
+    DROP COLUMN ID,
+    DROP COLUMN `Total.Docks`,
+    DROP COLUMN `Docks.in.Service,
+    DROP COLUMN `Status`;")
+
 # Load all CSV files
 files <- list.files(pattern = "202[4-5]{1}[0-1]{1}[0-9]{1}-divvy-tripdata.csv")
 
@@ -31,7 +44,6 @@ for (file in files) {
 }
 
 # Process - Data Wrangling
-
 dbExecute(con, "
     -- Create table t_base by merging all monthly tables
     CREATE TABLE t_base AS
@@ -77,6 +89,42 @@ dbExecute(con, "
         end_lng IS NULL;"); # -7213 lines
 
 dbExecute(con, "
+    -- Removing records with missing values
+    DELETE FROM t_base WHERE 
+        start_station_name = '' AND
+        end_station_name = '';"); # 535795 lines
+
+dbExecute(con, "
+    -- Removing negative duration
+    DELETE FROM t_base WHERE started_at > ended_at;") # - 132 lines
+
+dbExecute(con, "
+    -- Fixing station name
+    UPDATE t_base tb
+    INNER JOIN stations s ON tb.start_station_name = s.s_name
+    SET tb.start_station_id = s.s_id,
+        tb.start_lat = s.lat,
+        tb.start_lng = s.lng;"); # 0 lines
+
+# query how many nulls on each column
+null_counts <- dbGetQuery(con, "
+  SELECT 
+    SUM(CASE WHEN member_casual IS NULL THEN 1 ELSE 0 END) AS member_casual_nulls,
+    SUM(CASE WHEN rideable_type IS NULL THEN 1 ELSE 0 END) AS rideable_type_nulls,
+    SUM(CASE WHEN duration IS NULL THEN 1 ELSE 0 END) AS duration_nulls,
+    SUM(CASE WHEN start_station_name IS NULL THEN 1 ELSE 0 END) AS start_station_name_nulls,
+    SUM(CASE WHEN start_station_id IS NULL THEN 1 ELSE 0 END) AS start_station_id_nulls,
+    SUM(CASE WHEN start_lat IS NULL THEN 1 ELSE 0 END) AS start_lat_nulls,
+    SUM(CASE WHEN start_lng IS NULL THEN 1 ELSE 0 END) AS start_lng_nulls,
+    SUM(CASE WHEN end_station_name IS NULL THEN 1 ELSE 0 END) AS end_station_name_nulls,
+    SUM(CASE WHEN end_station_id IS NULL THEN 1 ELSE 0 END) AS end_station_id_nulls,
+    SUM(CASE WHEN end_lat IS NULL THEN 1 ELSE 0 END) AS end_lat_nulls,
+    SUM(CASE WHEN end_lng IS NULL THEN 1 ELSE 0 END) AS end_lng_nulls
+  FROM t_base;
+")
+print(null_counts)
+
+dbExecute(con, "
     -- Creating new transformed table
     CREATE TABLE t_data AS
     SELECT 
@@ -106,7 +154,8 @@ dbExecute(con, "
         start_lng,
         end_lat,
         end_lng
-    FROM t_base;"); # total size 922mb
+    FROM t_base;"); # total size 818mb
+
 
 dbExecute(con, "
     -- Fixing column types
@@ -126,11 +175,11 @@ dbExecute(con, "
     MODIFY start_lat FLOAT,
     MODIFY start_lng FLOAT,
     MODIFY end_lat FLOAT,
-    MODIFY end_lng FLOAT;"); # total size 705mb
+    MODIFY end_lng FLOAT;"); # total size 671mb
 
 dbExecute(con, "
     -- Removing negative duration
-    DELETE FROM t_data WHERE duration <= 60;") # - 135515 lines
+    DELETE FROM t_data WHERE duration <= 60;") # - 68716 lines
 
 dbExecute(con, "
 -- Removing Z score > 3 and < -3
@@ -148,49 +197,84 @@ WHERE duration IN (
              FROM t_data) AS avg_td
         HAVING ABS(z_score) > 3
     ) AS outliers
-);") # - 39599 lines
+);") # - 35660 lines
 
 
-# Load csv  as a new table
+# Stations
 dbWriteTable(con, "stations", read.csv("Divvy_Bicycle_Stations_20250317.csv"), overwrite = TRUE)
+dbExecute(con, "
+    ALTER TABLE stations
+    CHANGE `Station.Name` s_name VARCHAR(64),
+    CHANGE `Short.Name` s_id VARCHAR(64),
+    CHANGE `Latitude` lat FLOAT,
+    CHANGE `Longitude` lng FLOAT,
+    DROP COLUMN ID,
+    DROP COLUMN `Total.Docks`,
+    DROP COLUMN `Docks.in.Service,
+    DROP COLUMN `Status`;")
 
-# Use the table station data to fix the station names
+# Create new tables
+dbExecute(con, "
+  CREATE TABLE data_time AS
+  SELECT 
+      CASE 
+          WHEN member_casual = 1 AND rideable_type = 1 THEN 'M-Electric Bike'
+          WHEN member_casual = 1 AND rideable_type = 2 THEN 'M-Classic Bike'
+          WHEN member_casual = 1 AND rideable_type = 3 THEN 'M-Electric Scooter'
+          WHEN member_casual = 0 AND rideable_type = 1 THEN 'C-Electric Bike'
+          WHEN member_casual = 0 AND rideable_type = 2 THEN 'C-Classic Bike'
+          ELSE 'C-Electric Scooter'
+      END AS type,
+      year,
+      month,
+      weekday,
+      hour,
+      member_casual,
+      rideable_type,
+      COUNT(*) AS n_trips,
+      SUM(duration) AS duration,
+      SUM(duration) / COUNT(*) AS avg_duration
+  FROM t_data
+  GROUP BY year, month, weekday, hour, type, member_casual, rideable_type
+  ORDER BY year, month, weekday, hour, type;") # 9009 lines
 
-
-# Checking some data
-
-# Load data
-t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
+dbExecute(con, "
+  CREATE TABLE trip AS
+  SELECT 
+      member_casual,
+      start_station_name,
+      end_station_name,
+      COUNT(*) AS n_trips,
+      AVG(duration) AS duration,
+      AVG(start_lat) AS s_lat,
+      AVG(start_lng) AS s_lng,
+      AVG(end_lat) AS e_lat,
+      AVG(end_lng) AS e_lng
+  FROM t_data
+  GROUP BY member_casual, start_station_name, end_station_name;") #  273595 lines
 
 # Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
 data <- t_data %>%
   select(rideable_type, member_casual, duration) %>%
   mutate(trip_duration = round(as.numeric(duration)/60, 0))
 
-# Group by start station name and count trips 
-# Downloaded at https://data.cityofchicago.org/Transportation/Divvy-Bicycle-Stations/bbyy-e7gq/about_data
-stations <- dbExecute(con, "SELECT * FROM stations")
+dbExecute(con,"
+  CREATE TABLE data AS
+  SELECT 
+      rideable_type,
+      member_casual,
+      ROUND(duration/60) AS duration,
+      distance
+  FROM t_data;")
+
+# Load data
+t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
+trip <- DBI::dbGetQuery(con, "SELECT * FROM trip")
+data_time <- DBI::dbGetQuery(con, "SELECT * FROM data_time")
+data <- DBI::dbGetQuery(con, "SELECT * FROM data")
+stations <- dbExecute(con, "SELECT * FROM stations") # Downloaded at https://data.cityofchicago.org/Transportation/Divvy-Bicycle-Stations/bbyy-e7gq/about_data
 
 
-# Grouping for timeframe analysis
-data_time <- t_data %>%
-  mutate(type = case_when(
-    member_casual == 1 & rideable_type == 1 ~ "M-Electric Bike",
-    member_casual == 1 & rideable_type == 2 ~ "M-Classic Bike",
-    member_casual == 1 & rideable_type == 3 ~ "M-Electric Scooter",
-    member_casual == 0 & rideable_type == 1 ~ "C-Electric Bike",
-    member_casual == 0 & rideable_type == 2 ~ "C-Classic Bike",
-    member_casual == 0 & rideable_type == 3 ~ "C-Electric Scooter"
-  )) %>%
-  group_by(year, month, weekday,hour, type,member_casual,rideable_type) %>%
-  summarise(n_trips = n(),duration=sum(duration)/n())%>%
-  arrange(year, month, weekday,hour, type)
-
-# Trip destination and distance dataframe
-trip <- t_data %>%
-  filter(start_station_name != "" & end_station_name != "") %>%
-  group_by(member_casual, start_station_name, end_station_name) %>%
-  summarise(n_trips = n(), duration=mean(duration), s_lng = mean(start_lng), s_lat = mean(start_lat), e_lng = mean(end_lng),e_lat = mean(end_lat))
 
 # Histogram: Number of trips by trip duration
 data %>%
