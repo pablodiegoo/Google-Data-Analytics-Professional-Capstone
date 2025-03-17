@@ -33,8 +33,8 @@ for (file in files) {
 # Process - Data Wrangling
 
 dbExecute(con, "
-    -- Create table t_data by merging all monthly tables
-    CREATE TABLE t_data AS
+    -- Create table t_base by merging all monthly tables
+    CREATE TABLE t_base AS
     SELECT * FROM t_202401
     UNION ALL SELECT * FROM t_202402
     UNION ALL SELECT * FROM t_202403
@@ -50,117 +50,124 @@ dbExecute(con, "
     UNION ALL SELECT * FROM t_202501;");
 
 dbExecute(con, "
-    -- Fixing column types
-    ALTER TABLE t_data
-    MODIFY row_names INT8,
-    MODIFY ride_id VARCHAR(128),
-    MODIFY rideable_type VARCHAR(128),
+    -- Fixing column date types
+    ALTER TABLE t_base
     MODIFY started_at DATETIME,
-    MODIFY ended_at DATETIME,
-    MODIFY start_station_name VARCHAR(128),
-    MODIFY start_station_id VARCHAR(128),
-    MODIFY end_station_name VARCHAR(128),
-    MODIFY end_station_id VARCHAR(128),
-    MODIFY start_lat FLOAT,
-    MODIFY start_lng FLOAT,
-    MODIFY end_lat FLOAT,
-    MODIFY end_lng FLOAT;");
+    MODIFY ended_at DATETIME;"); # +5999257 lines
 
 dbExecute(con, "
     -- Removing duplicate records
-    CREATE TEMPORARY TABLE temp_duplicados AS
-    SELECT ride_id FROM t_data GROUP BY ride_id HAVING COUNT(*) > 1;
-    DELETE FROM t_data WHERE ride_id IN (SELECT ride_id FROM temp_duplicados);
-    DROP TEMPORARY TABLE temp_duplicados;");
+    DELETE t_base FROM t_base
+    INNER JOIN (
+        SELECT ride_id FROM t_base GROUP BY ride_id HAVING COUNT(*) > 1
+    ) AS temp_duplicados
+    ON t_base.ride_id = temp_duplicados.ride_id;"); # -422 Lines
 
 dbExecute(con, "
     -- Removing records with missing values
-    DELETE FROM t_data WHERE 
+    DELETE FROM t_base WHERE 
         ride_id IS NULL OR
         rideable_type IS NULL OR
         started_at IS NULL OR 
         ended_at IS NULL OR 
         member_casual IS NULL OR
         start_lat IS NULL OR
-        end_lat IS NULL;");
-
-dbExecute(con, "
-    -- Creating backup
-    CREATE TABLE t_backup AS SELECT * FROM t_data;
-    DROP TABLE t_data;");
+        start_lng IS NULL OR
+        end_lat IS NULL OR
+        end_lng IS NULL;"); # -7213 lines
 
 dbExecute(con, "
     -- Creating new transformed table
     CREATE TABLE t_data AS
     SELECT 
-        member_casual,
-        rideable_type,
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) AS trip_duration,
-        EXTRACT(HOUR FROM started_at) AS hour_of_day,
-        CASE DAYOFWEEK(started_at) 
-            WHEN 1 THEN 'Sun' 
-            WHEN 2 THEN 'Mon' 
-            WHEN 3 THEN 'Tue'
-            WHEN 4 THEN 'Wed' 
-            WHEN 5 THEN 'Thu' 
-            WHEN 6 THEN 'Fri' 
-            WHEN 7 THEN 'Sat'
-        END AS day_of_week,
-        CASE MONTH(started_at)
-            WHEN 1 THEN 'Jan' 
-            WHEN 2 THEN 'Feb' 
-            WHEN 3 THEN 'Mar' 
-            WHEN 4 THEN 'Apr'
-            WHEN 5 THEN 'May' 
-            WHEN 6 THEN 'Jun' 
-            WHEN 7 THEN 'Jul' 
-            WHEN 8 THEN 'Aug'
-            WHEN 9 THEN 'Sep' 
-            WHEN 10 THEN 'Oct' 
-            WHEN 11 THEN 'Nov' 
-            WHEN 12 THEN 'Dec'
-        END AS month,
-        EXTRACT(YEAR FROM started_at) AS year,
+        CASE 
+            WHEN member_casual = 'member' THEN 1
+            ELSE 0
+        END AS member_casual,
+        CASE 
+            WHEN rideable_type = 'electric_bike' THEN 1
+            WHEN rideable_type = 'classic_bike' THEN 2
+            ELSE 3
+        END AS rideable_type,
+        TIMESTAMPDIFF(SECOND, started_at, ended_at) AS duration,
+        ROUND(ST_Distance_Sphere(
+          POINT(start_lng, start_lat),
+          POINT(end_lng, end_lat)
+        )) AS distance,
+        HOUR(started_at) AS hour,
+        DAYOFWEEK(started_at) AS weekday,
+        MONTH(started_at) AS month,
+        YEAR(started_at) AS year,
         start_station_name,
         end_station_name,
         start_lat,
         start_lng,
         end_lat,
         end_lng
-    FROM t_backup;");
+    FROM t_base;"); # total size 852mb
 
-dbExecyte(con, "
-    -- Removing duration < 60 seconds
-    DELETE FROM t_data WHERE trip_duration < 60;")
+dbExecute(con, "
+    -- Fixing column types
+    ALTER TABLE t_data
+    MODIFY member_casual TINYINT,
+    MODIFY rideable_type TINYINT,
+    MODIFY duration INT,
+    MODIFY distance INT,
+    MODIFY hour TINYINT,
+    MODIFY weekday TINYINT,
+    MODIFY month TINYINT,
+    MODIFY year SMALLINT,
+    MODIFY start_station_name VARCHAR(64),
+    MODIFY end_station_name VARCHAR(64),
+    MODIFY start_lat FLOAT,
+    MODIFY start_lng FLOAT,
+    MODIFY end_lat FLOAT,
+    MODIFY end_lng FLOAT;"); # total size 598mb
 
+dbExecute(con, "
+    -- Removing negative duration
+    DELETE FROM t_data WHERE duration <= 0;") # - 1652 lines
 
 dbExecute(con, "
 -- Removing Z score > 3 and < -3
 DELETE FROM t_data
-WHERE trip_duration IN (
-    SELECT trip_duration FROM (
+WHERE duration IN (
+    SELECT duration FROM (
         SELECT 
-            td.trip_duration,
-            (td.trip_duration - avg_td.mean) / avg_td.stddev AS z_score
+            td.duration,
+            (td.duration - avg_td.mean) / avg_td.stddev AS z_score
         FROM 
             t_data td,
             (SELECT 
-                AVG(trip_duration) AS mean, 
-                STDDEV(trip_duration) AS stddev 
+                AVG(duration) AS mean, 
+                STDDEV(duration) AS stddev 
              FROM t_data) AS avg_td
         HAVING ABS(z_score) > 3
     ) AS outliers
-);")
+);") # - 40520 lines
+
+dbExecute(con, "
+    -- Removing negative duration
+    DELETE FROM t_data WHERE duration <= 60;") # - 133863 lines
+
 
 # Load data
 t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
 
+# Plot scatter start lat e start lng
+t_data %>%
+  ggplot(aes(x = start_lng, y = start_lat)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatter plot of Start Station",
+       subtitle = "January 2024 to January 2025",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal()
+
 # Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
 data <- t_data %>%
-  select(rideable_type, member_casual, trip_duration) %>%
-  filter(trip_duration > 0) %>% 
-  mutate(trip_duration = round(as.numeric(trip_duration)/60, 0)) %>%
-  filter(abs(as.vector(scale(as.numeric(trip_duration))))< 3)
+  select(rideable_type, member_casual, duration) %>%
+  mutate(trip_duration = round(as.numeric(duration)/60, 0))
 
 # Group by start station name and count trips
 stations <- t_data %>%
@@ -171,17 +178,23 @@ stations <- t_data %>%
 
 # Grouping for timeframe analysis
 data_time <- t_data %>%
-  select(rideable_type, member_casual, year, month, day_of_week,hour_of_day, trip_duration) %>%
-  mutate(day_of_week = factor(day_of_week, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")), month = factor(month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")), type = case_when(member_casual == "member" & rideable_type == "electric_bike" ~ "M-Eletric Bike", member_casual == "member" & rideable_type == "classic_bike" ~ "M-Classic Bike", member_casual == "member" & rideable_type == "electric_scooter" ~ "M-Eletric Scooter", member_casual == "casual" & rideable_type == "electric_bike" ~ "C-Eletric Bike", member_casual == "casual" & rideable_type == "classic_bike" ~ "C-Classic Bike", member_casual == "casual" & rideable_type == "electric_scooter" ~ "C-Eletric Scooter"),trip_duration=round(as.numeric(trip_duration)/60, 0)) %>%
-  group_by(year, month, day_of_week,hour_of_day, type) %>%
-  summarise(n_trips = n(),trip_duration=sum(trip_duration))%>%
-  arrange(year, month, day_of_week,hour_of_day, type)
+  mutate(type = case_when(
+      member_casual == 1 & rideable_type == 1 ~ "M-Eletric Bike",
+      member_casual == 1 & rideable_type == 2 ~ "M-Classic Bike",
+      member_casual == 1 & rideable_type == 3 ~ "M-Eletric Scooter",
+      member_casual == 0 & rideable_type == 1 ~ "C-Eletric Bike",
+      member_casual == 0 & rideable_type == 2 ~ "C-Classic Bike",
+      member_casual == 0 & rideable_type == 3 ~ "C-Eletric Scooter")
+      ) %>%
+  group_by(year, month, weekday,hour, type) %>%
+  summarise(n_trips = n(),duration=sum(duration))%>%
+  arrange(year, month, weekday,hour, type)
 
 # Trip destination and distance dataframe
 trip <- t_data %>%
   filter(start_station_name != "" & end_station_name != "") %>%
   group_by(member_casual, start_station_name, end_station_name) %>%
-  summarise(n_trips = n(), duration=mean(trip_duration), s_lng = mean(start_lng), s_lat = mean(start_lat), e_lng = mean(end_lng),e_lat = mean(end_lat))
+  summarise(n_trips = n(), duration=mean(duration), s_lng = mean(start_lng), s_lat = mean(start_lat), e_lng = mean(end_lng),e_lat = mean(end_lat))
 
 # Filter trip with top 30 n_trips
 trip_filtered <- trip %>%
