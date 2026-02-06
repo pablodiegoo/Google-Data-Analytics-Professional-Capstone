@@ -31,7 +31,7 @@ dbExecute(con, "
     CHANGE `Longitude` lng FLOAT,
     DROP COLUMN ID,
     DROP COLUMN `Total.Docks`,
-    DROP COLUMN `Docks.in.Service,
+    DROP COLUMN `Docks.in.Service`,
     DROP COLUMN `Status`;")
 
 # Load all CSV files
@@ -68,14 +68,6 @@ dbExecute(con, "
     MODIFY ended_at DATETIME;"); # +5999257 lines
 
 dbExecute(con, "
-    -- Removing duplicate records
-    DELETE t_base FROM t_base
-    INNER JOIN (
-        SELECT ride_id FROM t_base GROUP BY ride_id HAVING COUNT(*) > 1
-    ) AS temp_duplicados
-    ON t_base.ride_id = temp_duplicados.ride_id;"); # -422 Lines
-
-dbExecute(con, "
     -- Removing records with missing values
     DELETE FROM t_base WHERE 
         ride_id IS NULL OR
@@ -86,32 +78,42 @@ dbExecute(con, "
         start_lat IS NULL OR
         start_lng IS NULL OR
         end_lat IS NULL OR
-        end_lng IS NULL;"); # -7213 lines
-
-dbExecute(con, "
-    -- Removing records with missing values
-    DELETE FROM t_base WHERE 
+        end_lng IS NULL OR
+        start_station_name = NULL AND
+        end_station_name = NULL OR
         start_station_name = '' AND
-        end_station_name = '';"); # 535795 lines
+        end_station_name = '' OR
+        TIMESTAMPDIFF(MINUTE, started_at, ended_at) <= 1 OR
+        TIMESTAMPDIFF(MINUTE, started_at, ended_at) > 210;"); # -573204 lines
 
 dbExecute(con, "
-    -- Removing negative duration
-    DELETE FROM t_base WHERE started_at > ended_at;") # - 132 lines
+    -- Removing duplicate records
+    DELETE t_base FROM t_base
+    INNER JOIN (
+        SELECT ride_id FROM t_base GROUP BY ride_id HAVING COUNT(*) > 1
+    ) AS temp_duplicados
+    ON t_base.ride_id = temp_duplicados.ride_id;") # -298 Lines
 
 dbExecute(con, "
-    -- Fixing station name
+    CREATE INDEX idx_start_name ON t_base(start_station_name);
+    CREATE INDEX idx_end_name ON t_base(end_station_name);
+    CREATE INDEX idx_s_name ON stations(s_name);") # 0 lines
+
+dbExecute(con,"
+    -- Fixing start station name  with similar station name on station table
     UPDATE t_base tb
-    INNER JOIN stations s ON tb.start_station_name = s.s_name
-    SET tb.start_station_id = s.s_id,
+    INNER JOIN stations s
+    ON tb.start_station_name = s.s_name
+    SET tb.start_station_name = s.s_name,
+        tb.start_station_id = s.s_id,
         tb.start_lat = s.lat,
-        tb.start_lng = s.lng;"); # 0 lines
+        tb.start_lng = s.lng;") # 0 lines
 
-# query how many nulls on each column
-null_counts <- dbGetQuery(con, "
+
+print(dbGetQuery(con, "
   SELECT 
     SUM(CASE WHEN member_casual IS NULL THEN 1 ELSE 0 END) AS member_casual_nulls,
     SUM(CASE WHEN rideable_type IS NULL THEN 1 ELSE 0 END) AS rideable_type_nulls,
-    SUM(CASE WHEN duration IS NULL THEN 1 ELSE 0 END) AS duration_nulls,
     SUM(CASE WHEN start_station_name IS NULL THEN 1 ELSE 0 END) AS start_station_name_nulls,
     SUM(CASE WHEN start_station_id IS NULL THEN 1 ELSE 0 END) AS start_station_id_nulls,
     SUM(CASE WHEN start_lat IS NULL THEN 1 ELSE 0 END) AS start_lat_nulls,
@@ -121,23 +123,22 @@ null_counts <- dbGetQuery(con, "
     SUM(CASE WHEN end_lat IS NULL THEN 1 ELSE 0 END) AS end_lat_nulls,
     SUM(CASE WHEN end_lng IS NULL THEN 1 ELSE 0 END) AS end_lng_nulls
   FROM t_base;
-")
-print(null_counts)
+"))
 
 dbExecute(con, "
     -- Creating new transformed table
-    CREATE TABLE t_data AS
+    CREATE TABLE data AS
     SELECT 
         CASE 
-            WHEN member_casual = 'member' THEN 1
-            ELSE 0
-        END AS member_casual,
+            WHEN member_casual = 'member' THEN TRUE
+            ELSE FALSE
+        END AS member,
         CASE 
             WHEN rideable_type = 'electric_bike' THEN 1
             WHEN rideable_type = 'classic_bike' THEN 2
             ELSE 3
         END AS rideable_type,
-        TIMESTAMPDIFF(SECOND, started_at, ended_at) AS duration,
+        TIMESTAMPDIFF(MINUTE, started_at, ended_at) AS duration,
         ROUND(ST_Distance_Sphere(
           POINT(start_lng, start_lat),
           POINT(end_lng, end_lat)
@@ -154,13 +155,13 @@ dbExecute(con, "
         start_lng,
         end_lat,
         end_lng
-    FROM t_base;"); # total size 818mb
+    FROM t_base;"); # total size 918mb
 
 
 dbExecute(con, "
     -- Fixing column types
-    ALTER TABLE t_data
-    MODIFY member_casual TINYINT,
+    ALTER TABLE data
+    MODIFY member BOOLEAN,
     MODIFY rideable_type TINYINT,
     MODIFY duration INT,
     MODIFY distance INT,
@@ -178,70 +179,53 @@ dbExecute(con, "
     MODIFY end_lng FLOAT;"); # total size 671mb
 
 dbExecute(con, "
-    -- Removing negative duration
-    DELETE FROM t_data WHERE duration <= 60;") # - 68716 lines
-
-dbExecute(con, "
 -- Removing Z score > 3 and < -3
-DELETE FROM t_data
+DELETE FROM data
 WHERE duration IN (
     SELECT duration FROM (
         SELECT 
             td.duration,
             (td.duration - avg_td.mean) / avg_td.stddev AS z_score
         FROM 
-            t_data td,
+            data td,
             (SELECT 
                 AVG(duration) AS mean, 
                 STDDEV(duration) AS stddev 
-             FROM t_data) AS avg_td
+             FROM data) AS avg_td
         HAVING ABS(z_score) > 3
     ) AS outliers
-);") # - 35660 lines
+);") # - 115236 lines
 
-
-# Stations
-dbWriteTable(con, "stations", read.csv("Divvy_Bicycle_Stations_20250317.csv"), overwrite = TRUE)
-dbExecute(con, "
-    ALTER TABLE stations
-    CHANGE `Station.Name` s_name VARCHAR(64),
-    CHANGE `Short.Name` s_id VARCHAR(64),
-    CHANGE `Latitude` lat FLOAT,
-    CHANGE `Longitude` lng FLOAT,
-    DROP COLUMN ID,
-    DROP COLUMN `Total.Docks`,
-    DROP COLUMN `Docks.in.Service,
-    DROP COLUMN `Status`;")
 
 # Create new tables
 dbExecute(con, "
   CREATE TABLE data_time AS
   SELECT 
       CASE 
-          WHEN member_casual = 1 AND rideable_type = 1 THEN 'M-Electric Bike'
-          WHEN member_casual = 1 AND rideable_type = 2 THEN 'M-Classic Bike'
-          WHEN member_casual = 1 AND rideable_type = 3 THEN 'M-Electric Scooter'
-          WHEN member_casual = 0 AND rideable_type = 1 THEN 'C-Electric Bike'
-          WHEN member_casual = 0 AND rideable_type = 2 THEN 'C-Classic Bike'
+          WHEN member = 1 AND rideable_type = 1 THEN 'M-Electric Bike'
+          WHEN member = 1 AND rideable_type = 2 THEN 'M-Classic Bike'
+          WHEN member = 1 AND rideable_type = 3 THEN 'M-Electric Scooter'
+          WHEN member = 0 AND rideable_type = 1 THEN 'C-Electric Bike'
+          WHEN member = 0 AND rideable_type = 2 THEN 'C-Classic Bike'
           ELSE 'C-Electric Scooter'
       END AS type,
       year,
       month,
       weekday,
       hour,
-      member_casual,
+      member,
       rideable_type,
       COUNT(*) AS n_trips,
       SUM(duration) AS duration,
       SUM(duration) / COUNT(*) AS avg_duration
-  FROM t_data
-  GROUP BY year, month, weekday, hour, type, member_casual, rideable_type
-  ORDER BY year, month, weekday, hour, type;") # 9009 lines
+  FROM data
+  GROUP BY year, month, weekday, hour, type, member, rideable_type
+  ORDER BY year, month, weekday, hour, type;") # 9010 lines
 
 dbExecute(con, "
   CREATE TABLE trip AS
   SELECT 
-      member_casual,
+      member,
       start_station_name,
       end_station_name,
       COUNT(*) AS n_trips,
@@ -250,7 +234,7 @@ dbExecute(con, "
       AVG(start_lng) AS s_lng,
       AVG(end_lat) AS e_lat,
       AVG(end_lng) AS e_lng
-  FROM t_data
+  FROM data
   GROUP BY member_casual, start_station_name, end_station_name;") #  273595 lines
 
 # Data manipulation for ABS(Z-SCORE) >= 3 and remove duration < 60 seconds
@@ -268,17 +252,17 @@ dbExecute(con,"
   FROM t_data;")
 
 # Load data
-t_data <- DBI::dbGetQuery(con, "SELECT * FROM t_data")
-trip <- DBI::dbGetQuery(con, "SELECT * FROM trip")
-data_time <- DBI::dbGetQuery(con, "SELECT * FROM data_time")
-data <- DBI::dbGetQuery(con, "SELECT * FROM data")
-stations <- dbExecute(con, "SELECT * FROM stations") # Downloaded at https://data.cityofchicago.org/Transportation/Divvy-Bicycle-Stations/bbyy-e7gq/about_data
-
+trip <- dbExecute(con, "SELECT * FROM trip")
+data_time <- dbExecute(con, "SELECT * FROM data_time")
+data <- dbExecute(con, "SELECT rideable_type, member, duration, distance FROM data")
+# Downloaded at https://data.cityofchicago.org/Transportation/Divvy-Bicycle-Stations/bbyy-e7gq/about_data
+stations <- dbExecute(con, "SELECT * FROM stations")
 
 
 # Histogram: Number of trips by trip duration
-data %>%
-  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
+data %>% # change rideable_type to ("1" = "Electric Bike", "2" = "Classic Bike", "3" = "Electric Scooter")
+  mutate(rideable_type = case_when(rideable_type == 1 ~ "Electric Bike", rideable_type == 2 ~ "Classic Bike", rideable_type == 3 ~ "Electric Scooter")) %>%
+  ggplot(aes(x = duration, color = rideable_type, fill = rideable_type)) +
   geom_histogram(alpha = 0.6, binwidth = 2) +
   scale_fill_viridis(discrete = TRUE) +
   scale_color_viridis(discrete = TRUE) +
@@ -290,16 +274,19 @@ data %>%
     panel.spacing = unit(0.1, "lines"),
     strip.text.x = element_text(size = 8)
   ) +
-    labs(title = "Histogram of Trips by Member Type",
+  labs(title = "Histogram of Trips by Member Type",
        subtitle = "January 2024 to January 2025",
        x = "Trip Duration (minutes)",
-       y = "Total of Trips") +
-  facet_wrap(vars(member_casual), nrow = 1)
+       y = "Total of Trips",
+       fill = "Rideable Type",
+       color = "Rideable Type") +
+  facet_wrap(vars(member_casual), nrow = 1, labeller = labeller(member_casual = c("0" = "Casual", "1" = "Member")))
 ggsave("dataviz/histogram.jpeg", width = 10, height = 6, units = "in")
 
 # Histogram of number of trips by trip duration (Facets)
 data %>%
-  ggplot(aes(x = trip_duration, color = rideable_type, fill = rideable_type)) +
+  mutate(rideable_type = case_when(rideable_type == 1 ~ "Electric Bike", rideable_type == 2 ~ "Classic Bike", rideable_type == 3 ~ "Electric Scooter")) %>%
+  ggplot(aes(x = duration, color = rideable_type, fill = rideable_type)) +
   geom_histogram(alpha = 0.6, binwidth = 2) +
   scale_fill_viridis(discrete = TRUE) +
   scale_color_viridis(discrete = TRUE) +
@@ -315,12 +302,19 @@ data %>%
        subtitle = "January 2024 to January 2025",
        x = "Trip Duration (minutes)",
        y = "Total of Trips") +
-  facet_wrap(vars(rideable_type,member_casual), nrow = 3)
+  facet_wrap(vars(rideable_type,member_casual), nrow = 3, labeller = labeller(member_casual = c("0" = "Casual", "1" = "Member")))
 ggsave("dataviz/histogramfacet.jpeg", width = 10, height = 6, units = "in")
 
 # Frequecy of trips by rideable type
 data %>% 
-  count(member_casual, rideable_type, name="n_trips") %>% 
+  count(member_casual, rideable_type, name="n_trips") %>%
+  mutate(rideable_type = case_when(
+      rideable_type == 1 ~ "Electric Bike", 
+      rideable_type == 2 ~ "Classic Bike", 
+      rideable_type == 3 ~ "Electric Scooter"), 
+    member_casual = case_when(
+      member_casual == 1 ~ "Member", 
+      member_casual == 0 ~ "Casual")) %>%
   ggplot(aes(x = member_casual, y = n_trips, fill = rideable_type)) +
   geom_col(alpha = 0.6) +
   scale_fill_viridis(discrete = TRUE) +
@@ -336,7 +330,14 @@ ggsave("dataviz/frequency_bar.jpeg", width = 10, height = 6, units = "in")
 
 # Box plot for trip duration
 data %>%
-  ggplot(aes(x = member_casual, y = trip_duration, fill = rideable_type)) +
+  mutate(rideable_type = case_when(
+      rideable_type == 1 ~ "Electric Bike", 
+      rideable_type == 2 ~ "Classic Bike", 
+      rideable_type == 3 ~ "Electric Scooter"), 
+    member_casual = case_when(
+      member_casual == 1 ~ "Member", 
+      member_casual == 0 ~ "Casual")) %>%
+  ggplot(aes(x = member_casual, y = duration, fill = rideable_type)) +
   geom_boxplot(alpha = 0.6) +
   scale_fill_viridis(discrete = TRUE) +
   scale_color_viridis(discrete = TRUE) +
@@ -346,15 +347,23 @@ data %>%
     panel.spacing = unit(0.1, "lines"),
     strip.text.x = element_text(size = 8)
   ) +
-  xlab("Type of User") +
-  ylab("Trip Duration") +
-  facet_wrap(vars(rideable_type), nrow = 3)
+    labs(title = "Trip Duration by Member Type",
+       subtitle = "January 2024 to January 2025",
+       x = "Type of user",
+       y = "Trip Duration") +
+  facet_wrap(vars(rideable_type), nrow = 3, labeller = labeller(rideable_type = c("Electric Bike", "Classic Bike", "Electric Scooter")))
 ggsave("dataviz/boxplot.jpeg", width = 10, height = 6, units = "in")
 
 # Percentile of trips by rideable type
 data %>% 
   count(member_casual, rideable_type, name="n_trips") %>%
-  mutate(type = case_when(member_casual == "member" & rideable_type == "electric_bike" ~ "M-Eletric Bike", member_casual == "member" & rideable_type == "classic_bike" ~ "M-Classic Bike", member_casual == "member" & rideable_type == "electric_scooter" ~ "M-Eletric Scooter", member_casual == "casual" & rideable_type == "electric_bike" ~ "C-Eletric Bike", member_casual == "casual" & rideable_type == "classic_bike" ~ "C-Classic Bike", member_casual == "casual" & rideable_type == "electric_scooter" ~ "C-Eletric Scooter")) %>%
+  mutate(type = case_when(
+    member_casual == "member" & rideable_type == "electric_bike" ~ "M-Eletric Bike",
+    member_casual == "member" & rideable_type == "classic_bike" ~ "M-Classic Bike",
+    member_casual == "member" & rideable_type == "electric_scooter" ~ "M-Eletric Scooter",
+    member_casual == "casual" & rideable_type == "electric_bike" ~ "C-Eletric Bike",
+    member_casual == "casual" & rideable_type == "classic_bike" ~ "C-Classic Bike",
+    member_casual == "casual" & rideable_type == "electric_scooter" ~ "C-Eletric Scooter")) %>%
   arrange(desc(type)) %>%
   mutate(percent = n_trips / sum(n_trips) * 100, pct_label = round(as.numeric(percent), 2),ymax = cumsum(percent), ymin = c(0, head(ymax, n=-1)),labpos = (ymax+ymin)/2) %>%
   ggplot(aes(x = 2, y = percent, fill = type)) +
@@ -378,6 +387,7 @@ data %>%
         legend.position = "right") +
   xlim(0.5, 2.5)
 ggsave("dataviz/piechart.jpeg", width = 10, height = 6, units = "in")
+
 
 # Use analysis percentage
 data_time  %>%
